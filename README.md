@@ -19,7 +19,7 @@ VRChat で遊んでるときにあると便利なあれこれ
 
 - [xAI API Key](https://x.ai/) — 音声認識に使用
 - VRChat (OSC を有効にしておくこと。ポート `9000` へ送信します)
-- (任意) [Eliza](https://github.com/) 互換の対話エージェントサーバー — `/chat` エンドポイントを持つもの
+- (任意) [Eliza](https://github.com/) 互換の対話エージェントサーバー — `/eliza/api/chat` エンドポイントを持つもの
 
 ## セットアップ
 

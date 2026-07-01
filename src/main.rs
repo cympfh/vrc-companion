@@ -229,7 +229,7 @@ impl eframe::App for App {
                 match result {
                     Ok(response) => {
                         self.eliza_response = response.clone();
-                        if self.config.vrchat_enabled {
+                        if self.config.eliza_response_to_vrchat_enabled {
                             let client = vrchat::VRChatClient::new();
                             if let Err(e) =
                                 client.send_message(&format!("{}{}", ELIZA_PREFIX, response))
@@ -520,6 +520,16 @@ impl eframe::App for App {
                     .checkbox(&mut self.config.eliza_enabled, "Send to Eliza")
                     .changed();
 
+                let eliza_response_to_vrchat_changed = ui
+                    .add_enabled(
+                        self.config.eliza_enabled,
+                        egui::Checkbox::new(
+                            &mut self.config.eliza_response_to_vrchat_enabled,
+                            "Send Eliza's response to VRChat",
+                        ),
+                    )
+                    .changed();
+
                 if ui.button("📝 call QvPen").clicked() {
                     if let Err(e) = auto_input::call_qvpen() {
                         eprintln!("call_qvpen error: {}", e);
@@ -531,6 +541,7 @@ impl eframe::App for App {
                     || send_enter_changed
                     || vrchat_changed
                     || eliza_changed
+                    || eliza_response_to_vrchat_changed
                 {
                     if let Err(e) = self.config.save() {
                         eprintln!("Failed to save config: {}", e);

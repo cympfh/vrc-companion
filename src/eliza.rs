@@ -31,7 +31,7 @@ impl ElizaClient {
     }
 
     fn chat_endpoint(&self) -> String {
-        format!("{}/chat", self.url.trim_end_matches('/'))
+        format!("{}/eliza/api/chat", self.url.trim_end_matches('/'))
     }
 
     /// Send transcribed text to eliza-agent-server and return the response message
@@ -72,7 +72,10 @@ mod tests {
     #[test]
     fn test_chat_endpoint_strips_trailing_slash() {
         let client = ElizaClient::new("http://localhost:9096/".to_string());
-        assert_eq!(client.chat_endpoint(), "http://localhost:9096/chat");
+        assert_eq!(
+            client.chat_endpoint(),
+            "http://localhost:9096/eliza/api/chat"
+        );
     }
 
     #[test]

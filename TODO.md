@@ -27,7 +27,7 @@ Makefile -- 開発者向け (make build, make run, make test, make clean)
 - README.md: 概要・機能一覧・必要なもの(xAI API Key, VRChat OSC, Eliza)・設定ファイル場所・使い方・ビルド方法を記載
 - Makefile: build/run/test/clean に加え fmt/lint も用意。`make test` で14件のテストが通ることを確認
 
-## [ ] feat
+## [x] feat [2026-07-01 16:53 完了]
 
 ### 機能追加
 
@@ -40,6 +40,20 @@ Makefile -- 開発者向け (make build, make run, make test, make clean)
 Eliza に送信チェックを入れてても、右手の hand gesture を追加しないと実際には送信してないのが現状
 
 チェックが入ってたら全部送ることにする。
+
+- 実装状況の確認: Eliza の返答をGUIに表示する機能はすでに実装済みだった（main.rs の eliza_response 表示部分）
+- 新規実装: `eliza_response_to_vrchat_enabled` を Config に追加し、「Send Eliza's response to VRChat」チェックボックスを追加（Send to Eliza が有効な時のみ操作可能）
+    - 従来は Eliza 応答の VRChat 送信が `vrchat_enabled`（ユーザー発話の VRChat 送信フラグ）に依存していたため、独立させた
+    - このチェックボックスが true なら条件なしで送信するようにした（`cargo test` で16件のテスト通過、`cargo build` 成功）
+
+## [ ] リファクタリング
+
+- dead code は消す
+- 有用でないコメントは消す
+- fmt に掛ける
+- テストが通ることを確認する
+- 冗長や一貫性のない変数名/関数名を整理する
+- 複雑過ぎるロジックは関数に切り出す
 
 ## [ ] feat: 翻訳機能
 

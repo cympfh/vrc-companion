@@ -22,6 +22,8 @@ pub struct Config {
     pub vrchat_enabled: bool,
     #[serde(default = "default_eliza_enabled")]
     pub eliza_enabled: bool,
+    #[serde(default = "default_eliza_response_to_vrchat_enabled")]
+    pub eliza_response_to_vrchat_enabled: bool,
     #[serde(default = "default_eliza_url")]
     pub eliza_url: String,
 }
@@ -54,6 +56,10 @@ fn default_eliza_enabled() -> bool {
     false
 }
 
+fn default_eliza_response_to_vrchat_enabled() -> bool {
+    false
+}
+
 fn default_eliza_url() -> String {
     "http://localhost:9096".to_string()
 }
@@ -70,6 +76,7 @@ impl Default for Config {
             auto_input_send_enter: default_auto_input_send_enter(),
             vrchat_enabled: default_vrchat_enabled(),
             eliza_enabled: default_eliza_enabled(),
+            eliza_response_to_vrchat_enabled: default_eliza_response_to_vrchat_enabled(),
             eliza_url: default_eliza_url(),
         }
     }
@@ -159,6 +166,16 @@ mod tests {
         let config: Config = serde_json::from_str("{}").unwrap();
         assert_eq!(config.eliza_url, "http://localhost:9096");
         assert!(config.clipboard_enabled);
+        assert!(!config.eliza_response_to_vrchat_enabled);
+    }
+
+    #[test]
+    fn test_eliza_response_to_vrchat_serde_roundtrip() {
+        let mut config = Config::default();
+        config.eliza_response_to_vrchat_enabled = true;
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: Config = serde_json::from_str(&json).unwrap();
+        assert!(restored.eliza_response_to_vrchat_enabled);
     }
 
     #[test]
