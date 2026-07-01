@@ -1,3 +1,5 @@
+pub mod speech_to_text;
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -30,10 +32,10 @@ impl AudioRecorder {
 
     pub fn is_silent(&self, silence_duration_secs: f32) -> bool {
         let start_time = self.recording_start_time.lock().unwrap();
-        if let Some(start) = *start_time {
-            if start.elapsed() < Duration::from_secs(3) {
-                return false;
-            }
+        if let Some(start) = *start_time
+            && start.elapsed() < Duration::from_secs(3)
+        {
+            return false;
         }
 
         let last_sound = self.last_sound_time.lock().unwrap();

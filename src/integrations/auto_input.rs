@@ -87,9 +87,12 @@ pub fn type_text_with_enter(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn new_enigo() -> Result<Enigo, String> {
+    Enigo::new(&Settings::default()).map_err(|e| format!("Failed to create Enigo: {:?}", e))
+}
+
 fn type_text_sync(text: &str) -> Result<(), String> {
-    let mut enigo =
-        Enigo::new(&Settings::default()).map_err(|e| format!("Failed to create Enigo: {:?}", e))?;
+    let mut enigo = new_enigo()?;
     thread::sleep(Duration::from_millis(100));
     enigo
         .text(text)
@@ -98,8 +101,7 @@ fn type_text_sync(text: &str) -> Result<(), String> {
 }
 
 fn send_ctrl_v_sync() -> Result<(), String> {
-    let mut enigo =
-        Enigo::new(&Settings::default()).map_err(|e| format!("Failed to create Enigo: {:?}", e))?;
+    let mut enigo = new_enigo()?;
     thread::sleep(Duration::from_millis(100));
     enigo
         .key(Key::Control, enigo::Direction::Press)
@@ -116,19 +118,17 @@ fn send_ctrl_v_sync() -> Result<(), String> {
 fn send_ctrl_v_with_enter_sync() -> Result<(), String> {
     send_ctrl_v_sync()?;
     thread::sleep(Duration::from_millis(100));
-    let mut enigo =
-        Enigo::new(&Settings::default()).map_err(|e| format!("Failed to create Enigo: {:?}", e))?;
-    enigo
-        .key(Key::Return, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to press Enter: {:?}", e))?;
-    Ok(())
+    press_enter()
 }
 
 fn type_text_with_enter_sync(text: &str) -> Result<(), String> {
     type_text_sync(text)?;
     thread::sleep(Duration::from_millis(100));
-    let mut enigo =
-        Enigo::new(&Settings::default()).map_err(|e| format!("Failed to create Enigo: {:?}", e))?;
+    press_enter()
+}
+
+fn press_enter() -> Result<(), String> {
+    let mut enigo = new_enigo()?;
     enigo
         .key(Key::Return, enigo::Direction::Click)
         .map_err(|e| format!("Failed to press Enter: {:?}", e))?;

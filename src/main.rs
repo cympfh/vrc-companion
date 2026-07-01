@@ -1,24 +1,22 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod audio;
-mod auto_input;
 mod config;
-mod eliza;
-mod speech_to_text;
-mod vrchat;
+mod integrations;
 
 use audio::AudioRecorder;
+use audio::speech_to_text::SpeechToTextClient;
 use config::Config;
 use eframe::egui;
-use speech_to_text::SpeechToTextClient;
-use std::sync::mpsc::{channel, Receiver};
+use integrations::{auto_input, eliza, vrchat};
+use std::sync::mpsc::{Receiver, channel};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 fn main() -> eframe::Result<()> {
     let config = Config::load();
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([380.0, 480.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([380.0, 680.0]),
         ..Default::default()
     };
 
@@ -64,6 +62,7 @@ struct App {
     transcription_receiver: Option<UnboundedReceiver<TranscriptionMessage>>,
     tokio_runtime: Option<tokio::runtime::Runtime>,
     eliza_response_receiver: Option<Receiver<Result<String, String>>>,
+    mute_trigger_receiver: Receiver<()>,
 
     show_settings: bool,
     settings_xai_api_key: String,
@@ -87,6 +86,9 @@ impl App {
             .and_then(|name| available_devices.iter().position(|d| d == name))
             .unwrap_or(0);
 
+        let (mute_trigger_sender, mute_trigger_receiver) = channel::<()>();
+        vrchat::start_mute_listener(mute_trigger_sender);
+
         Self {
             settings_xai_api_key: config.xai_api_key.clone(),
             settings_eliza_url: config.eliza_url.clone(),
@@ -100,6 +102,7 @@ impl App {
             transcription_receiver: None,
             tokio_runtime: None,
             eliza_response_receiver: None,
+            mute_trigger_receiver,
             show_settings: false,
             available_devices,
             selected_device_index,
@@ -176,10 +179,10 @@ impl App {
     fn on_transcription_success(&mut self, text: String) {
         self.transcribed_text = text.clone();
 
-        if self.config.clipboard_enabled {
-            if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                let _ = clipboard.set_text(&text);
-            }
+        if self.config.clipboard_enabled
+            && let Ok(mut clipboard) = arboard::Clipboard::new()
+        {
+            let _ = clipboard.set_text(&text);
         }
 
         if self.config.vrchat_enabled && !text.is_empty() {
@@ -201,8 +204,10 @@ impl App {
         }
 
         if self.config.auto_input_enabled {
-            let result = match (self.config.clipboard_enabled, self.config.auto_input_send_enter)
-            {
+            let result = match (
+                self.config.clipboard_enabled,
+                self.config.auto_input_send_enter,
+            ) {
                 (true, true) => auto_input::send_ctrl_v_with_enter(),
                 (true, false) => auto_input::send_ctrl_v(),
                 (false, true) => auto_input::type_text_with_enter(&text),
@@ -224,38 +229,46 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if let Some(ref receiver) = self.eliza_response_receiver {
-            if let Ok(result) = receiver.try_recv() {
-                match result {
-                    Ok(response) => {
-                        self.eliza_response = response.clone();
-                        if self.config.eliza_response_to_vrchat_enabled {
-                            let client = vrchat::VRChatClient::new();
-                            if let Err(e) =
-                                client.send_message(&format!("{}{}", ELIZA_PREFIX, response))
-                            {
-                                eprintln!("Failed to send Eliza response to VRChat: {}", e);
-                            }
+        if let Some(ref receiver) = self.eliza_response_receiver
+            && let Ok(result) = receiver.try_recv()
+        {
+            match result {
+                Ok(response) => {
+                    self.eliza_response = response.clone();
+                    if self.config.eliza_response_to_vrchat_enabled {
+                        let client = vrchat::VRChatClient::new();
+                        if let Err(e) =
+                            client.send_message(&format!("{}{}", ELIZA_PREFIX, response))
+                        {
+                            eprintln!("Failed to send Eliza response to VRChat: {}", e);
                         }
                     }
-                    Err(e) => eprintln!("Eliza error: {}", e),
                 }
-                self.eliza_response_receiver = None;
+                Err(e) => eprintln!("Eliza error: {}", e),
             }
+            self.eliza_response_receiver = None;
         }
 
-        if let Some(receiver) = &mut self.transcription_receiver {
-            if let Ok(message) = receiver.try_recv() {
-                match message {
-                    TranscriptionMessage::Partial(text) => self.transcribed_text = text,
-                    TranscriptionMessage::Success(text) => self.on_transcription_success(text),
-                    TranscriptionMessage::Error(error) => {
-                        self.status_message = format!("Transcription failed: {}", error);
-                        self.is_transcribing = false;
-                        self.transcription_receiver = None;
-                        if let Some(rt) = self.tokio_runtime.take() {
-                            rt.shutdown_background();
-                        }
+        if self.mute_trigger_receiver.try_recv().is_ok()
+            && !self.is_recording
+            && !self.is_transcribing
+        {
+            self.is_recording = true;
+            self.on_start_recording();
+        }
+
+        if let Some(receiver) = &mut self.transcription_receiver
+            && let Ok(message) = receiver.try_recv()
+        {
+            match message {
+                TranscriptionMessage::Partial(text) => self.transcribed_text = text,
+                TranscriptionMessage::Success(text) => self.on_transcription_success(text),
+                TranscriptionMessage::Error(error) => {
+                    self.status_message = format!("Transcription failed: {}", error);
+                    self.is_transcribing = false;
+                    self.transcription_receiver = None;
+                    if let Some(rt) = self.tokio_runtime.take() {
+                        rt.shutdown_background();
                     }
                 }
             }
@@ -289,7 +302,11 @@ impl eframe::App for App {
                         )
                         .show_ui(ui, |ui| {
                             for (idx, device_name) in self.available_devices.iter().enumerate() {
-                                ui.selectable_value(&mut self.selected_device_index, idx, device_name);
+                                ui.selectable_value(
+                                    &mut self.selected_device_index,
+                                    idx,
+                                    device_name,
+                                );
                             }
                         });
                     ui.add_space(10.0);
@@ -312,7 +329,9 @@ impl eframe::App for App {
                             self.config.input_device_name = if self.selected_device_index == 0 {
                                 None
                             } else {
-                                self.available_devices.get(self.selected_device_index).cloned()
+                                self.available_devices
+                                    .get(self.selected_device_index)
+                                    .cloned()
                             };
                             if let Err(e) = self.config.save() {
                                 eprintln!("Failed to save config: {}", e);
@@ -326,7 +345,9 @@ impl eframe::App for App {
                                 .config
                                 .input_device_name
                                 .as_ref()
-                                .and_then(|name| self.available_devices.iter().position(|d| d == name))
+                                .and_then(|name| {
+                                    self.available_devices.iter().position(|d| d == name)
+                                })
                                 .unwrap_or(0);
                             self.show_settings = false;
                         }
@@ -354,20 +375,24 @@ impl eframe::App for App {
                 if !self.status_message.is_empty() {
                     ui.label(&self.status_message);
                 }
-                if self.is_recording {
-                    if let Some(recorder) = &self.audio_recorder {
-                        ui.label(format!(
-                            "Recording: {:.1}s | Silence: {:.1}s/{:.1}s",
-                            recorder.get_recording_duration(),
-                            recorder.get_silence_duration().as_secs_f32(),
-                            self.config.silence_duration_secs,
-                        ));
-                    }
+                if self.is_recording
+                    && let Some(recorder) = &self.audio_recorder
+                {
+                    ui.label(format!(
+                        "Recording: {:.1}s | Silence: {:.1}s/{:.1}s",
+                        recorder.get_recording_duration(),
+                        recorder.get_silence_duration().as_secs_f32(),
+                        self.config.silence_duration_secs,
+                    ));
                 }
 
                 ui.add_space(10.0);
 
-                let button_text = if self.is_recording { "⏹ Stop" } else { "⏺ Start" };
+                let button_text = if self.is_recording {
+                    "⏹ Stop"
+                } else {
+                    "⏺ Start"
+                };
                 let button_size = egui::vec2(300.0, 60.0);
 
                 let silence_progress = if self.is_recording {
@@ -439,8 +464,11 @@ impl eframe::App for App {
                             egui::Sense::hover(),
                         );
 
-                        ui.painter()
-                            .rect_filled(bar_rect, 2.0, egui::Color32::from_rgb(50, 50, 50));
+                        ui.painter().rect_filled(
+                            bar_rect,
+                            2.0,
+                            egui::Color32::from_rgb(50, 50, 50),
+                        );
 
                         if bar_fill_width > 0.0 {
                             let fill_rect = egui::Rect::from_min_size(
@@ -530,32 +558,31 @@ impl eframe::App for App {
                     )
                     .changed();
 
-                if ui.button("📝 call QvPen").clicked() {
-                    if let Err(e) = auto_input::call_qvpen() {
-                        eprintln!("call_qvpen error: {}", e);
-                    }
+                if ui.button("📝 call QvPen").clicked()
+                    && let Err(e) = auto_input::call_qvpen()
+                {
+                    eprintln!("call_qvpen error: {}", e);
                 }
 
-                if clipboard_changed
+                if (clipboard_changed
                     || auto_input_changed
                     || send_enter_changed
                     || vrchat_changed
                     || eliza_changed
-                    || eliza_response_to_vrchat_changed
+                    || eliza_response_to_vrchat_changed)
+                    && let Err(e) = self.config.save()
                 {
-                    if let Err(e) = self.config.save() {
-                        eprintln!("Failed to save config: {}", e);
-                    }
+                    eprintln!("Failed to save config: {}", e);
                 }
             });
         });
 
         if self.is_recording {
-            if let Some(recorder) = &self.audio_recorder {
-                if recorder.is_silent(self.config.silence_duration_secs) {
-                    self.is_recording = false;
-                    self.on_stop_recording();
-                }
+            if let Some(recorder) = &self.audio_recorder
+                && recorder.is_silent(self.config.silence_duration_secs)
+            {
+                self.is_recording = false;
+                self.on_stop_recording();
             }
             ctx.request_repaint();
         }

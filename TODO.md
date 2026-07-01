@@ -46,7 +46,7 @@ Eliza に送信チェックを入れてても、右手の hand gesture を追加
     - 従来は Eliza 応答の VRChat 送信が `vrchat_enabled`（ユーザー発話の VRChat 送信フラグ）に依存していたため、独立させた
     - このチェックボックスが true なら条件なしで送信するようにした（`cargo test` で16件のテスト通過、`cargo build` 成功）
 
-## [ ] リファクタリング
+## [x] リファクタリング [2026-07-01 17:01 完了]
 
 - dead code は消す
 - 有用でないコメントは消す
@@ -54,6 +54,27 @@ Eliza に送信チェックを入れてても、右手の hand gesture を追加
 - テストが通ることを確認する
 - 冗長や一貫性のない変数名/関数名を整理する
 - 複雑過ぎるロジックは関数に切り出す
+
+- `cargo clippy --fix` で collapsible-if を let-chain 化（main.rs, audio.rs）
+- src/ をジャンル別サブディレクトリに再編（ユーザー追加要望）
+    - `src/audio/{mod.rs, speech_to_text.rs}` (録音・音声認識)
+    - `src/integrations/{vrchat.rs, eliza.rs, auto_input.rs}` (外部連携)
+    - `config.rs`, `main.rs` はルートに残す
+- `auto_input.rs`: Enigo インスタンス生成 (`new_enigo`) と Enter 送信 (`press_enter`) の重複コードを関数抽出
+- `cargo fmt` / `cargo build` / `cargo test` (15件通過) 確認済み
+- 残存 clippy warning (`too_many_arguments`, `field_reassign_with_default` in tests, `enum_variant_names`) はスタイル上の些末な指摘のため対応せず
+
+## [x] winh 同様に MuteSelf トリガーで Start する機能 [2026-07-01 17:09 完了]
+
+9001 で OSC 受信して、`/avatar/parameters/MuteSelf` のくいくいってやったら Start ボタンを押すのと同じことをする
+winh にある機能なので基本そのまま持ってきて
+
+- `src/integrations/vrchat.rs`: winh の `start_mute_listener` を移植
+    - False→True (ミュート解除→ミュート) が1秒以内に起きたら「くいくい」判定
+    - 判定ロジックを `MuteToggleDetector` として切り出し、`with_timeout` でタイムアウトを注入できるようにしてユニットテスト可能にした（winh は判定ロジックがリスナー関数にインライン化されテスト不可だったため改善）
+    - winh の GestureRight/eliza_gesture 連動 (mute トリガー時に手のジェスチャーで eliza モードを切り替える機能) は vrc-companion に該当する概念(`config.eliza_gesture`)が無いため持ってこず、単純な「録音開始トリガー」のみ移植
+- `src/main.rs`: `App` に `mute_trigger_receiver: Receiver<()>` を追加、`App::new` でリスナーを起動、`update()` で受信したら Start ボタンと同じ `on_start_recording()` を呼ぶ（録音中/認識中は無視）
+- `cargo test` で20件（新規5件）のテスト通過、`cargo build` 成功、`cargo fmt` 適用済み
 
 ## [ ] feat: 翻訳機能
 

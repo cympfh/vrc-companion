@@ -3,7 +3,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{
-    connect_async, tungstenite::client::IntoClientRequest, tungstenite::Message,
+    connect_async, tungstenite::Message, tungstenite::client::IntoClientRequest,
 };
 
 const XAI_STT_WS_URL: &str = "wss://api.x.ai/v1/stt";
@@ -106,13 +106,13 @@ impl SpeechToTextClient {
                     match chunk {
                         Some(samples) => {
                             let bytes = to_pcm16_bytes(&samples);
-                            ws_sink.send(Message::Binary(bytes.into()))
+                            ws_sink.send(Message::Binary(bytes))
                                 .await
                                 .map_err(|e| SttError::NetworkError(e.to_string()))?;
                         }
                         None => {
                             ws_sink.send(Message::Text(
-                                r#"{"type":"audio.done"}"#.to_string().into()
+                                r#"{"type":"audio.done"}"#.to_string()
                             ))
                             .await
                             .map_err(|e| SttError::NetworkError(e.to_string()))?;
