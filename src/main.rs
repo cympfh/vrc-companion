@@ -577,14 +577,14 @@ impl eframe::App for App {
                                 clipboard_changed = ui
                                     .checkbox(
                                         &mut self.config.clipboard_enabled,
-                                        "Auto-copy to clipboard",
+                                        "Copy to clipboard",
                                     )
                                     .changed();
 
                                 auto_input_changed = ui
                                     .checkbox(
                                         &mut self.config.auto_input_enabled,
-                                        "Auto-input to active window",
+                                        "Input to active window",
                                     )
                                     .changed();
                                 if auto_input_changed && self.config.auto_input_enabled {
@@ -604,7 +604,7 @@ impl eframe::App for App {
                                 });
 
                                 vrchat_changed = ui
-                                    .checkbox(&mut self.config.vrchat_enabled, "Send to VRChat")
+                                    .checkbox(&mut self.config.vrchat_enabled, "Input to VRChat")
                                     .changed();
                                 if vrchat_changed && self.config.vrchat_enabled {
                                     self.config.enable_vrchat_exclusive();
@@ -613,7 +613,7 @@ impl eframe::App for App {
                                 auto_translate_changed = ui
                                     .checkbox(
                                         &mut self.config.auto_translate_enabled,
-                                        "自動翻訳する",
+                                        "自動翻訳 by Eliza",
                                     )
                                     .changed();
                                 if auto_translate_changed && self.config.auto_translate_enabled {
@@ -665,7 +665,7 @@ impl eframe::App for App {
                                 }
 
                                 eliza_changed = ui
-                                    .checkbox(&mut self.config.eliza_enabled, "Send to Eliza")
+                                    .checkbox(&mut self.config.eliza_enabled, "お話 with Eliza")
                                     .changed();
                                 if eliza_changed && self.config.eliza_enabled {
                                     self.config.enable_eliza_exclusive();
