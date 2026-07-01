@@ -57,11 +57,13 @@ struct App {
     audio_recorder: Option<AudioRecorder>,
     transcribed_text: String,
     eliza_response: String,
+    translated_response: String,
     status_message: String,
 
     transcription_receiver: Option<UnboundedReceiver<TranscriptionMessage>>,
     tokio_runtime: Option<tokio::runtime::Runtime>,
     eliza_response_receiver: Option<Receiver<Result<String, String>>>,
+    translate_response_receiver: Option<Receiver<Result<(String, String), String>>>,
     mute_trigger_receiver: Receiver<()>,
 
     show_settings: bool,
@@ -98,10 +100,12 @@ impl App {
             audio_recorder: None,
             transcribed_text: String::new(),
             eliza_response: String::new(),
+            translated_response: String::new(),
             status_message: String::new(),
             transcription_receiver: None,
             tokio_runtime: None,
             eliza_response_receiver: None,
+            translate_response_receiver: None,
             mute_trigger_receiver,
             show_settings: false,
             available_devices,
@@ -203,6 +207,21 @@ impl App {
             self.eliza_response_receiver = Some(rx);
         }
 
+        if self.config.auto_translate_enabled && !text.is_empty() {
+            let eliza_url = self.config.eliza_url.clone();
+            let target_lang = self.config.translate_target_lang();
+            let source_text = text.clone();
+            let (tx, rx) = channel::<Result<(String, String), String>>();
+            std::thread::spawn(move || {
+                let client = eliza::ElizaClient::new(eliza_url);
+                let result = client
+                    .translate("日本語", &target_lang, &source_text)
+                    .map(|translated| (source_text, translated));
+                let _ = tx.send(result);
+            });
+            self.translate_response_receiver = Some(rx);
+        }
+
         if self.config.auto_input_enabled {
             let result = match (
                 self.config.clipboard_enabled,
@@ -247,6 +266,22 @@ impl eframe::App for App {
                 Err(e) => eprintln!("Eliza error: {}", e),
             }
             self.eliza_response_receiver = None;
+        }
+
+        if let Some(ref receiver) = self.translate_response_receiver
+            && let Ok(result) = receiver.try_recv()
+        {
+            match result {
+                Ok((original, translated)) => {
+                    self.translated_response = translated.clone();
+                    let client = vrchat::VRChatClient::new();
+                    if let Err(e) = client.send_message(&format!("{} / {}", original, translated)) {
+                        eprintln!("Failed to send translated message to VRChat: {}", e);
+                    }
+                }
+                Err(e) => eprintln!("Eliza translate error: {}", e),
+            }
+            self.translate_response_receiver = None;
         }
 
         if self.mute_trigger_receiver.try_recv().is_ok()
@@ -511,63 +546,160 @@ impl eframe::App for App {
                     );
                 }
 
+                if self.config.auto_translate_enabled && !self.translated_response.is_empty() {
+                    ui.add_space(5.0);
+                    ui.label("Elizaからの翻訳結果:");
+                    ui.add_sized(
+                        [300.0, 60.0],
+                        egui::TextEdit::multiline(&mut self.translated_response).interactive(false),
+                    );
+                }
+
                 ui.add_space(10.0);
 
-                let clipboard_changed = ui
-                    .checkbox(&mut self.config.clipboard_enabled, "Auto-copy to clipboard")
-                    .changed();
+                let mut clipboard_changed = false;
+                let mut auto_input_changed = false;
+                let mut send_enter_changed = false;
+                let mut vrchat_changed = false;
+                let mut auto_translate_changed = false;
+                let mut translate_lang_changed = false;
+                let mut eliza_changed = false;
+                let mut eliza_response_to_vrchat_changed = false;
 
-                let auto_input_changed = ui
-                    .checkbox(
-                        &mut self.config.auto_input_enabled,
-                        "Auto-input to active window",
-                    )
-                    .changed();
-                if auto_input_changed && self.config.auto_input_enabled {
-                    self.config.enable_auto_input_exclusive();
-                }
+                egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+                    egui::Frame::none()
+                        .inner_margin(egui::Margin::symmetric(30.0, 0.0))
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.add_space(5.0);
+                                ui.set_width(300.0);
 
-                let send_enter_changed = ui
-                    .add_enabled(
-                        self.config.auto_input_enabled,
-                        egui::Checkbox::new(
-                            &mut self.config.auto_input_send_enter,
-                            "Send Enter after input",
-                        ),
-                    )
-                    .changed();
+                                clipboard_changed = ui
+                                    .checkbox(
+                                        &mut self.config.clipboard_enabled,
+                                        "Auto-copy to clipboard",
+                                    )
+                                    .changed();
 
-                let vrchat_changed = ui
-                    .checkbox(&mut self.config.vrchat_enabled, "Send to VRChat")
-                    .changed();
-                if vrchat_changed && self.config.vrchat_enabled {
-                    self.config.enable_vrchat_exclusive();
-                }
+                                auto_input_changed = ui
+                                    .checkbox(
+                                        &mut self.config.auto_input_enabled,
+                                        "Auto-input to active window",
+                                    )
+                                    .changed();
+                                if auto_input_changed && self.config.auto_input_enabled {
+                                    self.config.enable_auto_input_exclusive();
+                                }
 
-                let eliza_changed = ui
-                    .checkbox(&mut self.config.eliza_enabled, "Send to Eliza")
-                    .changed();
+                                ui.indent("send_enter_indent", |ui| {
+                                    send_enter_changed = ui
+                                        .add_enabled(
+                                            self.config.auto_input_enabled,
+                                            egui::Checkbox::new(
+                                                &mut self.config.auto_input_send_enter,
+                                                "Send Enter after input",
+                                            ),
+                                        )
+                                        .changed();
+                                });
 
-                let eliza_response_to_vrchat_changed = ui
-                    .add_enabled(
-                        self.config.eliza_enabled,
-                        egui::Checkbox::new(
-                            &mut self.config.eliza_response_to_vrchat_enabled,
-                            "Send Eliza's response to VRChat",
-                        ),
-                    )
-                    .changed();
+                                vrchat_changed = ui
+                                    .checkbox(&mut self.config.vrchat_enabled, "Send to VRChat")
+                                    .changed();
+                                if vrchat_changed && self.config.vrchat_enabled {
+                                    self.config.enable_vrchat_exclusive();
+                                }
 
-                if ui.button("📝 call QvPen").clicked()
-                    && let Err(e) = auto_input::call_qvpen()
-                {
-                    eprintln!("call_qvpen error: {}", e);
-                }
+                                auto_translate_changed = ui
+                                    .checkbox(
+                                        &mut self.config.auto_translate_enabled,
+                                        "自動翻訳する",
+                                    )
+                                    .changed();
+                                if auto_translate_changed && self.config.auto_translate_enabled {
+                                    self.config.enable_auto_translate_exclusive();
+                                }
+
+                                if self.config.auto_translate_enabled {
+                                    ui.indent("translate_lang_indent", |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label("翻訳先言語:");
+                                            egui::ComboBox::from_id_salt("translate_lang_combo")
+                                                .selected_text(
+                                                    match self.config.translate_lang_preset.as_str()
+                                                    {
+                                                        "EN" => "EN",
+                                                        "CN" => "CN",
+                                                        _ => "自由記述",
+                                                    },
+                                                )
+                                                .show_ui(ui, |ui| {
+                                                    for (value, label) in [
+                                                        ("EN", "EN"),
+                                                        ("CN", "CN"),
+                                                        ("CUSTOM", "自由記述"),
+                                                    ] {
+                                                        if ui
+                                                            .selectable_value(
+                                                                &mut self
+                                                                    .config
+                                                                    .translate_lang_preset,
+                                                                value.to_string(),
+                                                                label,
+                                                            )
+                                                            .changed()
+                                                        {
+                                                            translate_lang_changed = true;
+                                                        }
+                                                    }
+                                                });
+                                        });
+                                        if self.config.translate_lang_preset == "CUSTOM" {
+                                            translate_lang_changed |= ui
+                                                .text_edit_singleline(
+                                                    &mut self.config.translate_lang_custom,
+                                                )
+                                                .changed();
+                                        }
+                                    });
+                                }
+
+                                eliza_changed = ui
+                                    .checkbox(&mut self.config.eliza_enabled, "Send to Eliza")
+                                    .changed();
+                                if eliza_changed && self.config.eliza_enabled {
+                                    self.config.enable_eliza_exclusive();
+                                }
+
+                                ui.indent("eliza_response_to_vrchat_indent", |ui| {
+                                    eliza_response_to_vrchat_changed = ui
+                                        .add_enabled(
+                                            self.config.eliza_enabled,
+                                            egui::Checkbox::new(
+                                                &mut self.config.eliza_response_to_vrchat_enabled,
+                                                "Send Eliza's response to VRChat",
+                                            ),
+                                        )
+                                        .changed();
+                                });
+
+                                ui.add_space(5.0);
+                                if ui.button("📝 call QvPen").clicked()
+                                    && let Err(e) = auto_input::call_qvpen()
+                                {
+                                    eprintln!("call_qvpen error: {}", e);
+                                }
+                                ui.add_space(5.0);
+                            })
+                        })
+                });
 
                 if (clipboard_changed
                     || auto_input_changed
                     || send_enter_changed
                     || vrchat_changed
+                    || auto_translate_changed
+                    || translate_lang_changed
                     || eliza_changed
                     || eliza_response_to_vrchat_changed)
                     && let Err(e) = self.config.save()

@@ -76,7 +76,7 @@ winh にある機能なので基本そのまま持ってきて
 - `src/main.rs`: `App` に `mute_trigger_receiver: Receiver<()>` を追加、`App::new` でリスナーを起動、`update()` で受信したら Start ボタンと同じ `on_start_recording()` を呼ぶ（録音中/認識中は無視）
 - `cargo test` で20件（新規5件）のテスト通過、`cargo build` 成功、`cargo fmt` 適用済み
 
-## [ ] feat: 翻訳機能
+## [x] feat: 翻訳機能 [2026-07-01 17:20 完了]
 
 - 5 の VRChat に送信するチェックボックスの下に
     - 自動翻訳をするのチェックボックスを追加する
@@ -92,6 +92,15 @@ curl -s -X POST http://localhost:9096/eliza/api/translate -H "Content-Type: appl
 localhost:9096 は Eliza API Server に書き換えてね
 
 GUI にも「Elizaからの返答」の代わりに「Elizaからの翻訳結果」を表示する
+
+- `Config` に `auto_translate_enabled` / `translate_lang_preset` (EN/CN/CUSTOM) / `translate_lang_custom` を追加、`translate_target_lang()` で EN→英語, CN→中国語, CUSTOM→自由記述テキストに解決
+- `ElizaClient::translate(source_lang, target_lang, text)` を追加 (`/eliza/api/translate` へPOST、`translated_text` を返す)。既存の `send_chat`（`/eliza/api/chat`, item 6の会話機能）とは独立したエンドポイント・独立したチェックボックス
+- `App::on_transcription_success`: `auto_translate_enabled` なら別スレッドで `translate("日本語", target_lang, text)` を呼び、結果を `translate_response_receiver` へ送信。既存の `vrchat_enabled` ゲートの原文送信はそのまま変更せず
+- `App::update()`: 翻訳結果を受信したら `{元テキスト} / {翻訳結果}` を VRChat に送信（`eliza_response_to_vrchat_enabled` と同様に、既存の `vrchat_enabled` トグルとは独立して送信する設計 — TODO記載の Eliza応答→VRChat送信の decouple パターンを踏襲）
+- GUI: 「Send to VRChat」の下に「自動翻訳する」チェックボックス + 有効時のみ表示される言語ドロップダウン(EN/CN/自由記述)、自由記述選択時はテキスト入力欄も表示。表示エリアには「Eliza:」ブロックとは別に「Elizaからの翻訳結果:」ブロックを追加（`auto_translate_enabled` かつ結果が空でない時のみ表示）
+- テスト: `config.rs` に2件 (`translate_target_lang` の preset解決、serdeラウンドトリップ)、`integrations/eliza.rs` に3件 (endpoint生成、リクエストシリアライズ、レスポンスデシリアライズ) 追加、`cargo test` で25件（新規5件）通過、`cargo build` / `cargo fmt` 確認済み
+- `cargo clippy --all-targets -- -D warnings` は既存の3件の警告（`too_many_arguments` in audio/mod.rs, `field_reassign_with_default` in config.rs tests, `enum_variant_names` in speech_to_text.rs）が変更前から存在済みであることを確認（`git stash` で検証）。今回の変更で新規の clippy エラーは無い
+- 追加要望: 自動翻訳(`auto_translate_enabled`)と Send to Eliza(`eliza_enabled`) を排他にした。`enable_eliza_exclusive()` / `enable_auto_translate_exclusive()` を追加し、既存の auto_input/vrchat 排他パターンを踏襲。`cargo test` 26件通過
 
 ## [ ] SteamVR でも動くようにする！
 
