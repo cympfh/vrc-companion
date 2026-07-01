@@ -102,8 +102,33 @@ GUI にも「Elizaからの返答」の代わりに「Elizaからの翻訳結果
 - `cargo clippy --all-targets -- -D warnings` は既存の3件の警告（`too_many_arguments` in audio/mod.rs, `field_reassign_with_default` in config.rs tests, `enum_variant_names` in speech_to_text.rs）が変更前から存在済みであることを確認（`git stash` で検証）。今回の変更で新規の clippy エラーは無い
 - 追加要望: 自動翻訳(`auto_translate_enabled`)と Send to Eliza(`eliza_enabled`) を排他にした。`enable_eliza_exclusive()` / `enable_auto_translate_exclusive()` を追加し、既存の auto_input/vrchat 排他パターンを踏襲。`cargo test` 26件通過
 
-## [ ] SteamVR でも動くようにする！
+## [x] SteamVR でも動くようにする！ [2026-07-01 19:07 完了 (Stage1のみ、Stage2-4は下記サブタスクへ)]
 
 今までどおり GUI は残すが, SteamVR の overlay にも表示できるようにする
 設定画面は不要（それはPCのGUIからやる）
 各種チェックボックスとか QvPen ボタンだけが並んでれば最高
+
+- OpenVR公式C++ SDK(既存crateの`openvr`/`ovr_overlay`含む)はMSVC vtable ABIで、このプロジェクトのクロスコンパイル先`x86_64-pc-windows-gnu`と非互換のため使用不可。代わりにOpenVRの**プレーンC API**(`openvr_api.dll`)を`libloading`で動的ロードし、`VR_GetGenericInterface("FnTable:IVROverlay_028", ...)`でABI安全な関数ポインタテーブルを取得する自作FFIで実装（ユーザーの明示決定:「自作を試みましょう。動作確認は私がやりますから」）
+- `src/steamvr/` モジュールを新設: `bridge.rs`(全OS対象、`OverlaySnapshot`/`OverlayAction`/`OverlayHandle`型 + `start()`。non-windowsは常にNone)、`ffi.rs`(`#[cfg(windows)]`、`openvr_capi.h`から逐語転記した82フィールドの`VR_IVROverlay_FnTable`、`VR_InitInternal`/`VR_GetGenericInterface`/`VR_ShutdownInternal`の生FFI)、`session.rs`(`#[cfg(windows)]`、init→`CreateDashboardOverlay`→単色RGBAプレースホルダを`SetOverlayRaw`で表示するだけ)
+- `App`に`steamvr_overlay: Option<OverlayHandle>`を追加。`App::new`で`steamvr::start()`(失敗時はeprintln!してNone、既存の`vrchat::start_mute_listener`と同様に非致命的)。`App::update()`で`action_rx`をdrainして`apply_steamvr_action()`(既存の`Config`排他制御メソッドを再利用)、デスクトップGUI側のチェックボックス変更検知ブロックからも`push_steamvr_snapshot()`でVR側に反映
+- Cargo.toml: `[target.'cfg(windows)'.dependencies]`に`libloading = "0.8"`追加
+- 今回のスコープはStage 1（単色プレースホルダをダッシュボードオーバーレイに表示するところまで）。実際のegui描画・チェックボックス入力処理は未実装（下記サブタスク参照）
+- `cargo test`(28件、host)/`cargo build`(host)/`cargo build --target x86_64-pc-windows-gnu`（Windows-gated FFIコードの実コンパイル確認、警告ゼロ）/`cargo fmt --check` 全て確認済み
+- **ユーザー確認: 済 [2026-07-01 21:22]** — 実機(Windows+SteamVR)でダッシュボードオーバーレイにプレースホルダの水色/青色矩形が表示されることを確認
+- events.rs(OpenVRイベント→OverlayAction変換)は当初計画にあったが、Stage1では実際の呼び出し元(`PollNextOverlayEvent`配線)が無く`dead_code`になるため、Stage3に先送りした（意図的な計画からの逸脱）
+
+### サブタスク（Stage1のユーザー確認後、個別に `/todo` で対応）
+
+- [x] Stage 2: `steamvr::render` [2026-07-01 22:14 完了、ユーザー確認: 未] — プレースホルダの単色画像を実際のegui描画に置き換えた
+  - `glutin`は使わず自作WGL(`windows-sys`)で隠しウィンドウ+コンテキストを直接作成。理由: `eframe`がプロセス内で唯一の`winit::EventLoop`を既に保持しており、winitは2つ目の`EventLoop`生成をプロセス全体のフラグでエラーにするため（macOS限定ではなく全プラットフォーム共通の制約）。Stage1の「生FFIを手で書く」路線を継続
+  - 新規`src/steamvr/render.rs`(`#[cfg(windows)]`): `GlOverlayRenderer` — 隠しウィンドウ→`ChoosePixelFormat`/`SetPixelFormat`→`wglCreateContext`/`wglMakeCurrent`→`glow::Context`(GL関数ロードは`wglGetProcAddress`優先、nullなら`opengl32.dll`の`GetProcAddress`にフォールバック)→FBO+RGBAテクスチャ→`egui_glow::Painter`。`render()`は`bridge::overlay_fields()`を全て`ui.add_enabled(false, ...)`で読み取り専用チェックボックス表示+無効化した「📝 call QvPen」ボタンを描画し`gl.flush()`後にテクスチャを返す
+  - `ffi.rs`: `Texture_t`構造体(`openvr_capi.h`から逐語確認、16バイト)追加、`set_overlay_texture`フィールドをプレースホルダから実シグネチャに変更
+  - `bridge.rs`: `OverlayField`/`overlay_fields()`追加（デスクトップGUIのチェックボックスと同じラベル・順序・インデントを反映する純粋関数、全OSでテスト可能）
+  - `session.rs`: `show_placeholder`/`SetOverlayRaw`を削除、`GlOverlayRenderer`初期化+ループのタイムアウトを500ms→33msに変更、毎tick`render()`→`SetOverlayTexture`
+  - `cargo test`(30件、host)/`cargo build`(host)/`cargo build --target x86_64-pc-windows-gnu`(警告ゼロ)/`cargo fmt --check` 全て確認済み。`cargo clippy -- -D warnings`は元から(Stage2以前から)repo全体で失敗しており、Stage2で追加した`render.rs`/`session.rs`/`ffi.rs`由来の新規エラーは無いことを`git stash`で確認済み（clippy自体の全面修正はスコープ外）
+  - このWSL環境はGPUパススルー無しのため、WGL/GL/FBO/テクスチャ受け渡しの実動作はここでは検証不能。クロスコンパイル通過が本セッションでの検証の限界。「映らない/おかしい」場合は追加のフィードバックループが必要になる可能性がある旨は実装前から想定済み
+  - **実機フィードバック [2026-07-01]**: 「表示されたが文字とチェックボックス等の描画だけ。コントローラで操作はできない。日本語は文字化け(豆腐)」
+    - 日本語文字化け→修正済み: `GlOverlayRenderer`が独自に`egui::Context::default()`を作っており、`main.rs`がデスクトップウィンドウ用の`egui::Context`に読み込んでいる日本語フォント(`fonts/NotoSansJP-Regular.ttf`)がこの別コンテキストには一切適用されていなかった。`render.rs`に`setup_fonts()`を追加し`GlOverlayRenderer::new`内で同フォントを読み込むよう修正。`cargo build --target x86_64-pc-windows-gnu`警告ゼロで再確認済み（実機再確認は未）
+    - コントローラ操作不可→仕様通り: Stage2は全ウィジェットを`add_enabled(false, ...)`で読み取り専用にしており、`PollNextOverlayEvent`による入力配線も未実装（Stage3で対応予定）。バグではない
+- [ ] Stage 3: `steamvr::events` — `PollNextOverlayEvent`で入力イベントを取得しegui入力に変換、`OverlayAction`の実配線（クリック→送信）を実装
+- [ ] Stage 4: `WaitFrameSync`によるフレーム同期、ハプティクスなどの仕上げ

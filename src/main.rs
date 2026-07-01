@@ -3,6 +3,7 @@
 mod audio;
 mod config;
 mod integrations;
+mod steamvr;
 
 use audio::AudioRecorder;
 use audio::speech_to_text::SpeechToTextClient;
@@ -10,6 +11,7 @@ use config::Config;
 use eframe::egui;
 use integrations::{auto_input, eliza, vrchat};
 use std::sync::mpsc::{Receiver, channel};
+use steamvr::{OverlayAction, OverlayHandle, OverlaySnapshot};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 fn main() -> eframe::Result<()> {
@@ -65,6 +67,7 @@ struct App {
     eliza_response_receiver: Option<Receiver<Result<String, String>>>,
     translate_response_receiver: Option<Receiver<Result<(String, String), String>>>,
     mute_trigger_receiver: Receiver<()>,
+    steamvr_overlay: Option<OverlayHandle>,
 
     show_settings: bool,
     settings_xai_api_key: String,
@@ -91,6 +94,8 @@ impl App {
         let (mute_trigger_sender, mute_trigger_receiver) = channel::<()>();
         vrchat::start_mute_listener(mute_trigger_sender);
 
+        let steamvr_overlay = steamvr::start(OverlaySnapshot::from_config(&config));
+
         Self {
             settings_xai_api_key: config.xai_api_key.clone(),
             settings_eliza_url: config.eliza_url.clone(),
@@ -107,6 +112,7 @@ impl App {
             eliza_response_receiver: None,
             translate_response_receiver: None,
             mute_trigger_receiver,
+            steamvr_overlay,
             show_settings: false,
             available_devices,
             selected_device_index,
@@ -244,6 +250,65 @@ impl App {
             rt.shutdown_background();
         }
     }
+
+    /// デスクトップ側の Config を VR オーバーレイ描画スレッドに反映する。
+    fn push_steamvr_snapshot(&self) {
+        if let Some(overlay) = &self.steamvr_overlay {
+            let _ = overlay
+                .snapshot_tx
+                .send(OverlaySnapshot::from_config(&self.config));
+        }
+    }
+
+    /// VR オーバーレイ側から受け取ったアクションを Config に適用する。
+    /// 排他制御は既存の `enable_*_exclusive` を再利用する（Configの単一ソースを保つ）。
+    fn apply_steamvr_action(&mut self, action: OverlayAction) {
+        match action {
+            OverlayAction::ToggleClipboard => {
+                self.config.clipboard_enabled = !self.config.clipboard_enabled;
+            }
+            OverlayAction::ToggleAutoInput => {
+                if self.config.auto_input_enabled {
+                    self.config.auto_input_enabled = false;
+                } else {
+                    self.config.enable_auto_input_exclusive();
+                }
+            }
+            OverlayAction::ToggleAutoInputSendEnter => {
+                self.config.auto_input_send_enter = !self.config.auto_input_send_enter;
+            }
+            OverlayAction::ToggleVrchat => {
+                if self.config.vrchat_enabled {
+                    self.config.vrchat_enabled = false;
+                } else {
+                    self.config.enable_vrchat_exclusive();
+                }
+            }
+            OverlayAction::ToggleEliza => {
+                if self.config.eliza_enabled {
+                    self.config.eliza_enabled = false;
+                } else {
+                    self.config.enable_eliza_exclusive();
+                }
+            }
+            OverlayAction::ToggleElizaResponseToVrchat => {
+                self.config.eliza_response_to_vrchat_enabled =
+                    !self.config.eliza_response_to_vrchat_enabled;
+            }
+            OverlayAction::ToggleAutoTranslate => {
+                if self.config.auto_translate_enabled {
+                    self.config.auto_translate_enabled = false;
+                } else {
+                    self.config.enable_auto_translate_exclusive();
+                }
+            }
+            OverlayAction::CallQvPen => {
+                if let Err(e) = auto_input::call_qvpen() {
+                    eprintln!("call_qvpen error: {}", e);
+                }
+            }
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -290,6 +355,21 @@ impl eframe::App for App {
         {
             self.is_recording = true;
             self.on_start_recording();
+        }
+
+        let steamvr_actions: Vec<OverlayAction> = self
+            .steamvr_overlay
+            .as_ref()
+            .map(|overlay| overlay.action_rx.try_iter().collect())
+            .unwrap_or_default();
+        if !steamvr_actions.is_empty() {
+            for action in steamvr_actions {
+                self.apply_steamvr_action(action);
+            }
+            if let Err(e) = self.config.save() {
+                eprintln!("Failed to save config: {}", e);
+            }
+            self.push_steamvr_snapshot();
         }
 
         if let Some(receiver) = &mut self.transcription_receiver
@@ -694,17 +774,19 @@ impl eframe::App for App {
                         })
                 });
 
-                if (clipboard_changed
+                if clipboard_changed
                     || auto_input_changed
                     || send_enter_changed
                     || vrchat_changed
                     || auto_translate_changed
                     || translate_lang_changed
                     || eliza_changed
-                    || eliza_response_to_vrchat_changed)
-                    && let Err(e) = self.config.save()
+                    || eliza_response_to_vrchat_changed
                 {
-                    eprintln!("Failed to save config: {}", e);
+                    if let Err(e) = self.config.save() {
+                        eprintln!("Failed to save config: {}", e);
+                    }
+                    self.push_steamvr_snapshot();
                 }
             });
         });
