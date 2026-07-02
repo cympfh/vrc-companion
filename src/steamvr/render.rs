@@ -23,7 +23,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 
-use super::bridge::{OverlaySnapshot, overlay_fields};
+use super::bridge::{OverlayAction, OverlaySnapshot, overlay_fields};
 
 const WINDOW_CLASS_NAME: &str = "VrcCompanionOverlayGlWindow";
 
@@ -157,8 +157,13 @@ impl GlOverlayRenderer {
         }
     }
 
-    /// 現在の `snapshot` を反映した読み取り専用UIを描画し、結果のテクスチャを返す。
-    pub fn render(&mut self, snapshot: &OverlaySnapshot) -> Result<glow::NativeTexture, String> {
+    /// 現在の `snapshot` を反映したUIを描画し、結果のテクスチャと今フレームでクリックされた
+    /// `OverlayAction` 一覧を返す。`events` は SteamVR から拾ったポインタ入力(session.rs)。
+    pub fn render(
+        &mut self,
+        snapshot: &OverlaySnapshot,
+        events: Vec<egui::Event>,
+    ) -> Result<(glow::NativeTexture, Vec<OverlayAction>), String> {
         unsafe {
             if wglMakeCurrent(self.hdc, self.hglrc) == 0 {
                 return Err("wglMakeCurrent が失敗した".to_string());
@@ -172,22 +177,29 @@ impl GlOverlayRenderer {
                 egui::Pos2::ZERO,
                 egui::vec2(self.width as f32, self.height as f32),
             )),
+            events,
             ..Default::default()
         };
+
+        let mut clicked: Vec<OverlayAction> = Vec::new();
 
         let output = self.egui_ctx.run(raw_input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 for field in overlay_fields(snapshot) {
                     let mut checked = field.enabled;
-                    if field.indent {
-                        ui.indent(field.label, |ui| {
-                            ui.add_enabled(false, egui::Checkbox::new(&mut checked, field.label));
-                        });
+                    let resp = if field.indent {
+                        ui.indent(field.label, |ui| ui.checkbox(&mut checked, field.label))
+                            .inner
                     } else {
-                        ui.add_enabled(false, egui::Checkbox::new(&mut checked, field.label));
+                        ui.checkbox(&mut checked, field.label)
+                    };
+                    if resp.clicked() {
+                        clicked.push(field.action);
                     }
                 }
-                ui.add_enabled(false, egui::Button::new("📝 call QvPen"));
+                if ui.button("📝 call QvPen").clicked() {
+                    clicked.push(OverlayAction::CallQvPen);
+                }
             });
         });
 
@@ -209,7 +221,7 @@ impl GlOverlayRenderer {
             self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         }
 
-        Ok(self.texture)
+        Ok((self.texture, clicked))
     }
 }
 

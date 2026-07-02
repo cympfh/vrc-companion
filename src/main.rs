@@ -313,6 +313,16 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // SteamVRオーバーレイのアクション(action_rx)はこのupdate()内でしかdrainされない。
+        // 通常のeframeは反応的(次のOS入力/描画イベントまでupdate()を呼ばない)なので、
+        // デスクトップウィンドウを見ていない間(VR内での操作中はまさにこの状態)は
+        // オーバーレイでクリックしてもConfig反映・スナップショット再送が止まってしまい、
+        // オーバーレイ側では古いスナップショットで再描画され続けてチェックが一瞬で戻る。
+        // これを避けるため、オーバーレイが有効な間は一定周期で強制的にrepaintさせる。
+        if self.steamvr_overlay.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+
         if let Some(ref receiver) = self.eliza_response_receiver
             && let Ok(result) = receiver.try_recv()
         {

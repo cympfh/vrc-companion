@@ -34,6 +34,7 @@ pub struct OverlayField {
     pub label: &'static str,
     pub enabled: bool,
     pub indent: bool,
+    pub action: OverlayAction,
 }
 
 /// デスクトップGUIのチェックボックス群と対応するオーバーレイ表示用フィールド一覧を返す。
@@ -44,44 +45,53 @@ pub fn overlay_fields(snapshot: &OverlaySnapshot) -> Vec<OverlayField> {
             label: "Copy to clipboard",
             enabled: snapshot.clipboard_enabled,
             indent: false,
+            action: OverlayAction::ToggleClipboard,
         },
         OverlayField {
             label: "Input to active window",
             enabled: snapshot.auto_input_enabled,
             indent: false,
+            action: OverlayAction::ToggleAutoInput,
         },
         OverlayField {
             label: "Send Enter after input",
             enabled: snapshot.auto_input_send_enter,
             indent: true,
+            action: OverlayAction::ToggleAutoInputSendEnter,
         },
         OverlayField {
             label: "Input to VRChat",
             enabled: snapshot.vrchat_enabled,
             indent: false,
+            action: OverlayAction::ToggleVrchat,
         },
         OverlayField {
             label: "自動翻訳 by Eliza",
             enabled: snapshot.auto_translate_enabled,
             indent: false,
+            action: OverlayAction::ToggleAutoTranslate,
         },
         OverlayField {
             label: "お話 with Eliza",
             enabled: snapshot.eliza_enabled,
             indent: false,
+            action: OverlayAction::ToggleEliza,
         },
         OverlayField {
             label: "Send Eliza's response to VRChat",
             enabled: snapshot.eliza_response_to_vrchat_enabled,
             indent: true,
+            action: OverlayAction::ToggleElizaResponseToVrchat,
         },
     ]
 }
 
 /// VR オーバーレイ側のチェックボックス操作 → デスクトップ側 Config への反映アクション。
-/// Stage1では送信元 (events.rs の入力処理) は未実装、配線のみ用意。
-/// 各バリアントは main.rs の apply_steamvr_action で match されるが、実際に construct する
-/// 送信元(PollNextOverlayEvent配線)はStage3まで存在しないため dead_code を明示的に許容する。
+/// 各バリアントは main.rs の apply_steamvr_action で match され、
+/// session.rs の PollNextOverlayEvent 配線(render.rsのクリック検出経由)から construct される。
+/// その実際の construct 元である `overlay_fields`/render.rs は、非Windows host build では
+/// (テスト以外)呼び出されない(render.rs自体が`#[cfg(windows)]`)ため、dead_code は
+/// 常にこのプラットフォームで発生する — enumレベルで明示的に許容する。
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayAction {
@@ -166,19 +176,36 @@ mod tests {
     #[test]
     fn test_overlay_fields_labels_order_and_indent() {
         let fields = overlay_fields(&all_false_snapshot());
-        let expected: Vec<(&str, bool)> = vec![
-            ("Copy to clipboard", false),
-            ("Input to active window", false),
-            ("Send Enter after input", true),
-            ("Input to VRChat", false),
-            ("自動翻訳 by Eliza", false),
-            ("お話 with Eliza", false),
-            ("Send Eliza's response to VRChat", true),
+        let expected: Vec<(&str, bool, OverlayAction)> = vec![
+            ("Copy to clipboard", false, OverlayAction::ToggleClipboard),
+            (
+                "Input to active window",
+                false,
+                OverlayAction::ToggleAutoInput,
+            ),
+            (
+                "Send Enter after input",
+                true,
+                OverlayAction::ToggleAutoInputSendEnter,
+            ),
+            ("Input to VRChat", false, OverlayAction::ToggleVrchat),
+            (
+                "自動翻訳 by Eliza",
+                false,
+                OverlayAction::ToggleAutoTranslate,
+            ),
+            ("お話 with Eliza", false, OverlayAction::ToggleEliza),
+            (
+                "Send Eliza's response to VRChat",
+                true,
+                OverlayAction::ToggleElizaResponseToVrchat,
+            ),
         ];
         assert_eq!(fields.len(), expected.len());
-        for (field, (label, indent)) in fields.iter().zip(expected.iter()) {
+        for (field, (label, indent, action)) in fields.iter().zip(expected.iter()) {
             assert_eq!(field.label, *label);
             assert_eq!(field.indent, *indent);
+            assert_eq!(field.action, *action);
         }
     }
 

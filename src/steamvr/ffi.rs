@@ -8,8 +8,8 @@
 //! フィールドの型・順序は公式ヘッダ
 //! https://github.com/ValveSoftware/openvr/blob/master/headers/openvr_capi.h
 //! (取得日 2026-07-01) から逐語的に転記した。順序はABIクリティカル — 変更しないこと。
-//! Stage1で実際に呼び出すのは create_dashboard_overlay / show_overlay / set_overlay_raw
-//! のみなので、それ以外のフィールドは正しい順序・サイズを保つためのプレースホルダとする。
+//! 実際に呼び出さないフィールドは、正しい順序・サイズを保つためのプレースホルダ
+//! (`PlaceholderFn`) にしている。
 
 use libloading::Library;
 use std::ffi::{c_char, c_void};
@@ -31,6 +31,45 @@ pub struct Texture_t {
     pub handle: *mut c_void,
     pub e_type: ETextureType,
     pub e_color_space: EColorSpace,
+}
+
+pub const EVENT_MOUSE_MOVE: u32 = 300;
+pub const EVENT_MOUSE_BUTTON_DOWN: u32 = 301;
+pub const EVENT_MOUSE_BUTTON_UP: u32 = 302;
+
+pub type EVROverlayInputMethod = i32;
+pub const INPUT_METHOD_MOUSE: EVROverlayInputMethod = 1;
+
+#[repr(C)]
+pub struct HmdVector2_t {
+    pub v: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct VREvent_Mouse_t {
+    pub x: f32,
+    pub y: f32,
+    pub button: u32,
+    pub cursor_index: u32,
+}
+
+/// C側の32メンバーunionのうち、Stage3で実際に使う`mouse`と、サイズ/アライメントを
+/// 本物(最大メンバーである`VREvent_Reserved_t` = 6×uint64_t, 48バイト, align 8)に
+/// 揃えるための`reserved`のみを転記する。
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union VREvent_Data_t {
+    pub reserved: [u64; 6],
+    pub mouse: VREvent_Mouse_t,
+}
+
+#[repr(C)]
+pub struct VREvent_t {
+    pub event_type: u32,
+    pub tracked_device_index: u32,
+    pub event_age_seconds: f32,
+    pub data: VREvent_Data_t,
 }
 
 /// 実際には呼び出さないフィールド用のプレースホルダ型。
@@ -87,11 +126,13 @@ pub struct VrIvOverlayFnTable {
     pub is_overlay_visible: unsafe extern "C" fn(VrOverlayHandle) -> bool,
     pub get_transform_for_overlay_coordinates: PlaceholderFn,
     pub wait_frame_sync: PlaceholderFn,
-    pub poll_next_overlay_event: PlaceholderFn,
+    pub poll_next_overlay_event: unsafe extern "C" fn(VrOverlayHandle, *mut VREvent_t, u32) -> bool,
     pub get_overlay_input_method: PlaceholderFn,
-    pub set_overlay_input_method: PlaceholderFn,
+    pub set_overlay_input_method:
+        unsafe extern "C" fn(VrOverlayHandle, EVROverlayInputMethod) -> EVROverlayError,
     pub get_overlay_mouse_scale: PlaceholderFn,
-    pub set_overlay_mouse_scale: PlaceholderFn,
+    pub set_overlay_mouse_scale:
+        unsafe extern "C" fn(VrOverlayHandle, *mut HmdVector2_t) -> EVROverlayError,
     pub compute_overlay_intersection: PlaceholderFn,
     pub is_hover_target_overlay: PlaceholderFn,
     pub set_overlay_intersection_mask: PlaceholderFn,
@@ -213,6 +254,24 @@ mod tests {
             std::mem::size_of::<Texture_t>(),
             16,
             "Texture_t のサイズが公式ヘッダ(16バイト)と食い違っている可能性がある"
+        );
+    }
+
+    #[test]
+    fn test_vrevent_t_size_matches_official_header() {
+        assert_eq!(
+            std::mem::size_of::<VREvent_t>(),
+            64,
+            "VREvent_t のサイズが公式ヘッダ(64バイト)と食い違っている可能性がある"
+        );
+    }
+
+    #[test]
+    fn test_hmd_vector2_t_size_matches_official_header() {
+        assert_eq!(
+            std::mem::size_of::<HmdVector2_t>(),
+            8,
+            "HmdVector2_t のサイズが公式ヘッダ(8バイト)と食い違っている可能性がある"
         );
     }
 }
