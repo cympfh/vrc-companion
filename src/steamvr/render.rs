@@ -185,6 +185,8 @@ impl GlOverlayRenderer {
 
         let output = self.egui_ctx.run(raw_input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
+                ui.heading("VRC Companion");
+                ui.separator();
                 for field in overlay_fields(snapshot) {
                     let mut checked = field.enabled;
                     let resp = if field.indent {

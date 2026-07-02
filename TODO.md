@@ -163,10 +163,17 @@ GUI にも「Elizaからの返答」の代わりに「Elizaからの翻訳結果
   - `cargo test`(30件、host)/`cargo build`(host)/`cargo build --target x86_64-pc-windows-gnu`(警告ゼロ)/`cargo fmt --check`全て確認済み。`cargo clippy --all-targets -- -D warnings`は続報2修正時のエラー集合(11件)と完全一致(新規リグレッション無し)
   - このWSL環境はSteamVR実行不可のため、`WaitFrameSync`によるペーシングが実機で不自然なラグ/カクつきを生まないか、ハプティクスの強さ・長さが感触として適切かは改めて実機でのユーザー確認が必要。これでTODO.mdのSteamVR関連タスクのうちStage1-4は全て完了(残りは別見出しの「SteamVR Overlay UI 改善: タイトルを追加」のみ)
 
-## [ ] SteamVR Overlay UI 改善: タイトルを追加
+## [x] SteamVR Overlay UI 改善: タイトルを追加 [2026-07-02 13:26 完了]
 
 頭に一回り大きいフォントで "VRC Companion" と表示する
 
+- `render.rs`の`render()`内、`CentralPanel`の先頭(チェックボックス一覧より前)に`ui.heading("VRC Companion")` + `ui.separator()`を追加。`ui.heading`はegui標準の`TextStyle::Heading`(デフォルトの`Body`より大きいフォントサイズ)を使うため、専用のフォントサイズ指定は不要
+- このファイルは`#[cfg(windows)]`ゲートのためhost buildでは未コンパイル。`cargo build --target x86_64-pc-windows-gnu`(警告ゼロ)で確認。`cargo test`(30件、host、変更なし)/`cargo build`(host)/`cargo fmt --check`も確認済み。`cargo clippy --all-targets -- -D warnings`はStage4時点のエラー集合(11件)と完全一致(新規リグレッション無し)
+- このWSL環境はSteamVR実行不可のため、実機での見た目(サイズ感・レイアウト崩れの有無)は改めてユーザー確認が必要
+
 ## [ ] SteamVR Overlay UI 改善: チャットのテキスト表示領域を追加
 
+今のチェックボックス群の下に二つテキスト表示領域を追加する:
 
+1. 最後の speech-to-text の結果
+2. 最後の eliza からの返答（または翻訳結果）
