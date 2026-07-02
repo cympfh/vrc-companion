@@ -187,6 +187,16 @@ impl GlOverlayRenderer {
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.heading("VRC Companion");
                 ui.separator();
+
+                let start_stop_label = if snapshot.is_recording {
+                    "⏹ Stop"
+                } else {
+                    "⏺ Start"
+                };
+                if ui.button(start_stop_label).clicked() {
+                    clicked.push(OverlayAction::ToggleRecording);
+                }
+
                 for field in overlay_fields(snapshot) {
                     let mut checked = field.enabled;
                     let resp = if field.indent {

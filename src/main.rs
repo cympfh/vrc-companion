@@ -94,7 +94,8 @@ impl App {
         let (mute_trigger_sender, mute_trigger_receiver) = channel::<()>();
         vrchat::start_mute_listener(mute_trigger_sender);
 
-        let steamvr_overlay = steamvr::start(OverlaySnapshot::from_config(&config, "", "", ""));
+        let steamvr_overlay =
+            steamvr::start(OverlaySnapshot::from_config(&config, false, "", "", ""));
 
         Self {
             settings_xai_api_key: config.xai_api_key.clone(),
@@ -257,6 +258,7 @@ impl App {
         if let Some(overlay) = &self.steamvr_overlay {
             let _ = overlay.snapshot_tx.send(OverlaySnapshot::from_config(
                 &self.config,
+                self.is_recording,
                 &self.transcribed_text,
                 &self.eliza_response,
                 &self.translated_response,
@@ -309,6 +311,15 @@ impl App {
             OverlayAction::CallQvPen => {
                 if let Err(e) = auto_input::call_qvpen() {
                     eprintln!("call_qvpen error: {}", e);
+                }
+            }
+            OverlayAction::ToggleRecording => {
+                if self.is_recording {
+                    self.is_recording = false;
+                    self.on_stop_recording();
+                } else {
+                    self.is_recording = true;
+                    self.on_start_recording();
                 }
             }
         }
@@ -371,6 +382,7 @@ impl eframe::App for App {
         {
             self.is_recording = true;
             self.on_start_recording();
+            self.push_steamvr_snapshot();
         }
 
         let steamvr_actions: Vec<OverlayAction> = self
@@ -581,6 +593,7 @@ impl eframe::App for App {
                         self.is_recording = true;
                         self.on_start_recording();
                     }
+                    self.push_steamvr_snapshot();
                 }
 
                 ui.add_space(10.0);
@@ -816,6 +829,7 @@ impl eframe::App for App {
             {
                 self.is_recording = false;
                 self.on_stop_recording();
+                self.push_steamvr_snapshot();
             }
             ctx.request_repaint();
         }

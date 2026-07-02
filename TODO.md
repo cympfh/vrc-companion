@@ -184,4 +184,11 @@ GUI にも「Elizaからの返答」の代わりに「Elizaからの翻訳結果
 - `cargo test`(30件、host、変更なし)/`cargo build`(host、既存の2件のdead-code警告のみ)/`cargo build --target x86_64-pc-windows-gnu`(警告ゼロ)/`cargo fmt --check`/`cargo clippy --all-targets -- -D warnings`(既存のエラー集合と完全一致、新規リグレッション無し)全て確認済み
 - このWSL環境はSteamVR実行不可のため、実機でのレイアウト(テキストがオーバーレイ幅400x高さ300に収まるか、長文での折り返し・スクロールの有無)は改めてユーザー確認が必要
 
-## [ ] SteamVR Overlay UI 改善: スタートボタンを設置する
+## [x] SteamVR Overlay UI 改善: スタートボタンを設置する [2026-07-02 13:42 完了]
+
+- `bridge.rs`: `OverlayAction::ToggleRecording`を追加。`OverlaySnapshot`に`is_recording: bool`を追加し、`from_config`の第2引数として受け取るように変更(既存テストも追随、`assert_eq!(_, true)`はclippy(`bool_assert_comparison`)に引っかかるため`assert!`に修正)
+- `render.rs`: タイトル+区切り線の直後(チェックボックス群より前——デスクトップGUIでもStartボタンはチェックボックス群より前にある構造を踏襲)に、`snapshot.is_recording`で"⏺ Start"/"⏹ Stop"とラベルが切り替わる`ui.button`を追加。クリックで`OverlayAction::ToggleRecording`を積む
+- `main.rs`: `apply_steamvr_action`に`ToggleRecording`アームを追加——デスクトップの手動Start/Stopボタン(main.rs:587-595)と同じ`is_recording`トグル+`on_start_recording()`/`on_stop_recording()`呼び出しロジックをミラー。`OverlaySnapshot::from_config`の全呼び出し箇所(初期スナップショット、`push_steamvr_snapshot()`)を新シグネチャに追随
+- `is_recording`はConfigのフィールドではないため、これまでconfig変更時にしか送られなかった`push_steamvr_snapshot()`を、is_recordingが変化する全箇所(MuteSelfジェスチャ自動録音開始、デスクトップの手動Start/Stopボタン、無音検知による自動停止)にも追加——オーバーレイのStart/Stopボタン表示がどの経路で録音状態が変わっても追従するようにした
+- `cargo test`(30件、host、変更なし)/`cargo build`(host、既存の2件のdead-code警告のみ)/`cargo build --target x86_64-pc-windows-gnu`(警告ゼロ)/`cargo fmt --check`/`cargo clippy --all-targets -- -D warnings`(既存のエラー集合と完全一致、新規リグレッション無し)全て確認済み
+- このWSL環境はSteamVR実行不可のため、実機でボタンから実際に録音開始/停止できるか、ラベル切り替えのタイミングが自然かは改めてユーザー確認が必要
