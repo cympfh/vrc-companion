@@ -171,9 +171,17 @@ GUI にも「Elizaからの返答」の代わりに「Elizaからの翻訳結果
 - このファイルは`#[cfg(windows)]`ゲートのためhost buildでは未コンパイル。`cargo build --target x86_64-pc-windows-gnu`(警告ゼロ)で確認。`cargo test`(30件、host、変更なし)/`cargo build`(host)/`cargo fmt --check`も確認済み。`cargo clippy --all-targets -- -D warnings`はStage4時点のエラー集合(11件)と完全一致(新規リグレッション無し)
 - このWSL環境はSteamVR実行不可のため、実機での見た目(サイズ感・レイアウト崩れの有無)は改めてユーザー確認が必要
 
-## [ ] SteamVR Overlay UI 改善: チャットのテキスト表示領域を追加
+## [x] SteamVR Overlay UI 改善: チャットのテキスト表示領域を追加 [2026-07-02 13:35 完了]
 
 今のチェックボックス群の下に二つテキスト表示領域を追加する:
 
 1. 最後の speech-to-text の結果
 2. 最後の eliza からの返答（または翻訳結果）
+
+- `bridge.rs`: `OverlaySnapshot`に`last_transcription`/`last_eliza_response`/`last_translated_response`(`String`)を追加。`from_config`の引数をこの3つ追加して4引数化(既存テストも追随)
+- `render.rs`: `render()`のUIクロージャ内、チェックボックス群+QvPenボタンの後に`ui.separator()` + 常時表示の"Transcribed:"ラベル、続けて`eliza_enabled && !last_eliza_response.is_empty()`なら"Eliza:"、そうでなく`auto_translate_enabled && !last_translated_response.is_empty()`なら"翻訳結果:"を表示するif/elseブロックを追加——デスクトップGUI(main.rs)の排他的なEliza/翻訳表示ゲーティングと同じ条件をミラー
+- `main.rs`: `OverlaySnapshot::from_config`の呼び出し2箇所(`App::new`の初期スナップショット、`push_steamvr_snapshot()`)を新シグネチャに追随。加えて、これまで`push_steamvr_snapshot()`が設定変更時のみ呼ばれていて文字列更新時には呼ばれていなかったため、`transcribed_text`(Partial/Success両方)・`eliza_response`・`translated_response`の各更新箇所に`self.push_steamvr_snapshot()`を追加——オーバーレイがテキストの変化を都度反映するようにした
+- `cargo test`(30件、host、変更なし)/`cargo build`(host、既存の2件のdead-code警告のみ)/`cargo build --target x86_64-pc-windows-gnu`(警告ゼロ)/`cargo fmt --check`/`cargo clippy --all-targets -- -D warnings`(既存のエラー集合と完全一致、新規リグレッション無し)全て確認済み
+- このWSL環境はSteamVR実行不可のため、実機でのレイアウト(テキストがオーバーレイ幅400x高さ300に収まるか、長文での折り返し・スクロールの有無)は改めてユーザー確認が必要
+
+## [ ] SteamVR Overlay UI 改善: スタートボタンを設置する

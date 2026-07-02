@@ -15,7 +15,7 @@ use super::render::GlOverlayRenderer;
 const OVERLAY_KEY: &str = "cympfh.vrc_companion";
 const OVERLAY_NAME: &str = "VRC Companion";
 const OVERLAY_WIDTH: u32 = 400;
-const OVERLAY_HEIGHT: u32 = 300;
+const OVERLAY_HEIGHT: u32 = 380;
 
 pub fn start(initial: OverlaySnapshot) -> Option<OverlayHandle> {
     let (snapshot_tx, snapshot_rx) = mpsc::channel::<OverlaySnapshot>();

@@ -202,6 +202,20 @@ impl GlOverlayRenderer {
                 if ui.button("📝 call QvPen").clicked() {
                     clicked.push(OverlayAction::CallQvPen);
                 }
+
+                ui.separator();
+                ui.label("Transcribed:");
+                ui.label(&snapshot.last_transcription);
+
+                if snapshot.eliza_enabled && !snapshot.last_eliza_response.is_empty() {
+                    ui.label("Eliza:");
+                    ui.label(&snapshot.last_eliza_response);
+                } else if snapshot.auto_translate_enabled
+                    && !snapshot.last_translated_response.is_empty()
+                {
+                    ui.label("翻訳結果:");
+                    ui.label(&snapshot.last_translated_response);
+                }
             });
         });
 

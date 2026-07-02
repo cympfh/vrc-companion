@@ -94,7 +94,7 @@ impl App {
         let (mute_trigger_sender, mute_trigger_receiver) = channel::<()>();
         vrchat::start_mute_listener(mute_trigger_sender);
 
-        let steamvr_overlay = steamvr::start(OverlaySnapshot::from_config(&config));
+        let steamvr_overlay = steamvr::start(OverlaySnapshot::from_config(&config, "", "", ""));
 
         Self {
             settings_xai_api_key: config.xai_api_key.clone(),
@@ -249,14 +249,18 @@ impl App {
         if let Some(rt) = self.tokio_runtime.take() {
             rt.shutdown_background();
         }
+        self.push_steamvr_snapshot();
     }
 
     /// デスクトップ側の Config を VR オーバーレイ描画スレッドに反映する。
     fn push_steamvr_snapshot(&self) {
         if let Some(overlay) = &self.steamvr_overlay {
-            let _ = overlay
-                .snapshot_tx
-                .send(OverlaySnapshot::from_config(&self.config));
+            let _ = overlay.snapshot_tx.send(OverlaySnapshot::from_config(
+                &self.config,
+                &self.transcribed_text,
+                &self.eliza_response,
+                &self.translated_response,
+            ));
         }
     }
 
@@ -341,6 +345,7 @@ impl eframe::App for App {
                 Err(e) => eprintln!("Eliza error: {}", e),
             }
             self.eliza_response_receiver = None;
+            self.push_steamvr_snapshot();
         }
 
         if let Some(ref receiver) = self.translate_response_receiver
@@ -357,6 +362,7 @@ impl eframe::App for App {
                 Err(e) => eprintln!("Eliza translate error: {}", e),
             }
             self.translate_response_receiver = None;
+            self.push_steamvr_snapshot();
         }
 
         if self.mute_trigger_receiver.try_recv().is_ok()
@@ -386,7 +392,10 @@ impl eframe::App for App {
             && let Ok(message) = receiver.try_recv()
         {
             match message {
-                TranscriptionMessage::Partial(text) => self.transcribed_text = text,
+                TranscriptionMessage::Partial(text) => {
+                    self.transcribed_text = text;
+                    self.push_steamvr_snapshot();
+                }
                 TranscriptionMessage::Success(text) => self.on_transcription_success(text),
                 TranscriptionMessage::Error(error) => {
                     self.status_message = format!("Transcription failed: {}", error);

@@ -12,10 +12,18 @@ pub struct OverlaySnapshot {
     pub eliza_enabled: bool,
     pub eliza_response_to_vrchat_enabled: bool,
     pub auto_translate_enabled: bool,
+    pub last_transcription: String,
+    pub last_eliza_response: String,
+    pub last_translated_response: String,
 }
 
 impl OverlaySnapshot {
-    pub fn from_config(config: &Config) -> Self {
+    pub fn from_config(
+        config: &Config,
+        last_transcription: &str,
+        last_eliza_response: &str,
+        last_translated_response: &str,
+    ) -> Self {
         Self {
             clipboard_enabled: config.clipboard_enabled,
             auto_input_enabled: config.auto_input_enabled,
@@ -24,6 +32,9 @@ impl OverlaySnapshot {
             eliza_enabled: config.eliza_enabled,
             eliza_response_to_vrchat_enabled: config.eliza_response_to_vrchat_enabled,
             auto_translate_enabled: config.auto_translate_enabled,
+            last_transcription: last_transcription.to_string(),
+            last_eliza_response: last_eliza_response.to_string(),
+            last_translated_response: last_translated_response.to_string(),
         }
     }
 }
@@ -137,7 +148,8 @@ mod tests {
         config.eliza_response_to_vrchat_enabled = true;
         config.auto_translate_enabled = false;
 
-        let snapshot = OverlaySnapshot::from_config(&config);
+        let snapshot =
+            OverlaySnapshot::from_config(&config, "こんにちは", "Eliza応答", "translated");
 
         assert_eq!(snapshot.clipboard_enabled, config.clipboard_enabled);
         assert_eq!(snapshot.auto_input_enabled, config.auto_input_enabled);
@@ -152,12 +164,15 @@ mod tests {
             snapshot.auto_translate_enabled,
             config.auto_translate_enabled
         );
+        assert_eq!(snapshot.last_transcription, "こんにちは");
+        assert_eq!(snapshot.last_eliza_response, "Eliza応答");
+        assert_eq!(snapshot.last_translated_response, "translated");
     }
 
     #[test]
     fn test_start_returns_none_or_some_without_panicking() {
         // 実機(SteamVR)無しでも呼べることだけを保証する。非Windowsでは常にNone。
-        let snapshot = OverlaySnapshot::from_config(&Config::default());
+        let snapshot = OverlaySnapshot::from_config(&Config::default(), "", "", "");
         let _ = start(snapshot);
     }
 
@@ -170,6 +185,9 @@ mod tests {
             eliza_enabled: false,
             eliza_response_to_vrchat_enabled: false,
             auto_translate_enabled: false,
+            last_transcription: String::new(),
+            last_eliza_response: String::new(),
+            last_translated_response: String::new(),
         }
     }
 
