@@ -125,7 +125,7 @@ pub struct VrIvOverlayFnTable {
     pub hide_overlay: PlaceholderFn,
     pub is_overlay_visible: unsafe extern "C" fn(VrOverlayHandle) -> bool,
     pub get_transform_for_overlay_coordinates: PlaceholderFn,
-    pub wait_frame_sync: PlaceholderFn,
+    pub wait_frame_sync: unsafe extern "C" fn(u32) -> EVROverlayError,
     pub poll_next_overlay_event: unsafe extern "C" fn(VrOverlayHandle, *mut VREvent_t, u32) -> bool,
     pub get_overlay_input_method: PlaceholderFn,
     pub set_overlay_input_method:
@@ -136,7 +136,8 @@ pub struct VrIvOverlayFnTable {
     pub compute_overlay_intersection: PlaceholderFn,
     pub is_hover_target_overlay: PlaceholderFn,
     pub set_overlay_intersection_mask: PlaceholderFn,
-    pub trigger_laser_mouse_haptic_vibration: PlaceholderFn,
+    pub trigger_laser_mouse_haptic_vibration:
+        unsafe extern "C" fn(VrOverlayHandle, f32, f32, f32) -> EVROverlayError,
     pub set_overlay_cursor: PlaceholderFn,
     pub set_overlay_cursor_position_override: PlaceholderFn,
     pub clear_overlay_cursor_position_override: PlaceholderFn,

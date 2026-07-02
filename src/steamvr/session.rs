@@ -7,7 +7,6 @@
 
 use std::ffi::{CString, c_char, c_void};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Duration;
 
 use super::bridge::{OverlayAction, OverlayHandle, OverlaySnapshot};
 use super::ffi::{self, OpenVrLibrary, Texture_t, VrOverlayHandle};
@@ -83,15 +82,29 @@ fn run(
 
     let mut latest = initial;
     loop {
-        match snapshot_rx.recv_timeout(Duration::from_millis(33)) {
+        // WaitFrameSync でコンポジタの次フレームに同期する(固定インターバルの
+        // recv_timeoutによるポーリングではなく、コンポジタ側のペースに揃える)。
+        // タイムアウトしても(戻り値がエラーでも)描画自体は続ける — SteamVRが
+        // 一時的にフレームを配れない状況(例: ダッシュボード非表示中)でも
+        // オーバーレイの更新を止めたくないため。
+        if let Err(e) = wait_frame_sync(&lib, 100) {
+            eprintln!("[SteamVR] WaitFrameSync 失敗: {}", e);
+        }
+
+        match snapshot_rx.try_recv() {
             Ok(s) => latest = s,
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => break,
         }
 
         let events = poll_overlay_events(&lib, overlay_handle);
         match renderer.render(&latest, events) {
             Ok((texture, actions)) => {
+                if !actions.is_empty() {
+                    if let Err(e) = trigger_laser_mouse_haptic_vibration(&lib, overlay_handle) {
+                        eprintln!("[SteamVR] TriggerLaserMouseHapticVibration 失敗: {}", e);
+                    }
+                }
                 for action in actions {
                     let _ = action_tx.send(action);
                 }
@@ -207,6 +220,29 @@ fn set_overlay_mouse_scale(
 ) -> Result<(), String> {
     let mut scale = ffi::HmdVector2_t { v: [width, height] };
     let err = unsafe { (lib.overlay().set_overlay_mouse_scale)(handle, &mut scale) };
+    if err != 0 {
+        return Err(format!("EVROverlayError={}", err));
+    }
+    Ok(())
+}
+
+fn wait_frame_sync(lib: &OpenVrLibrary, timeout_ms: u32) -> Result<(), String> {
+    let err = unsafe { (lib.overlay().wait_frame_sync)(timeout_ms) };
+    if err != 0 {
+        return Err(format!("EVROverlayError={}", err));
+    }
+    Ok(())
+}
+
+/// クリック成立時にレーザーポインタへ短い振動フィードバックを返す。
+/// 継続時間・周波数・振幅は「トリガー押下がUIに反映された」ことが分かる程度の
+/// 短いパルスとして適当に選んだ値(実機での感触調整が必要な可能性あり)。
+fn trigger_laser_mouse_haptic_vibration(
+    lib: &OpenVrLibrary,
+    handle: VrOverlayHandle,
+) -> Result<(), String> {
+    let err =
+        unsafe { (lib.overlay().trigger_laser_mouse_haptic_vibration)(handle, 0.05, 40.0, 1.0) };
     if err != 0 {
         return Err(format!("EVROverlayError={}", err));
     }

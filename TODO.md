@@ -156,4 +156,17 @@ GUI にも「Elizaからの返答」の代わりに「Elizaからの翻訳結果
     - `main.rs`: `App::update()`冒頭に`if self.steamvr_overlay.is_some() { ctx.request_repaint_after(Duration::from_millis(100)); }`を追加。オーバーレイが有効な間は約100ms間隔で`update()`を強制的に周期実行させ、デスクトップウィンドウの表示/フォーカス状態に関わらず`action_rx`のdrainとスナップショット往復が定期的に走るようにした
     - `cargo test`(30件)/`cargo build`(host)/`cargo build --target x86_64-pc-windows-gnu`(警告ゼロ)/`cargo fmt --check`全て確認済み。`cargo clippy --all-targets -- -D warnings`は直前の続報1修正時のエラー集合と完全一致(新規リグレッション無し)
     - このWSL環境はSteamVR実行不可のため、実際にチェックが押した状態で保持され続けるかは改めて実機でのユーザー確認が必要
-- [ ] Stage 4: `WaitFrameSync`によるフレーム同期、ハプティクスなどの仕上げ
+- [x] Stage 4: `WaitFrameSync`によるフレーム同期、ハプティクスなどの仕上げ [2026-07-02 13:24 完了]
+  - 公式ヘッダ`/tmp/openvr_capi.h`で逐語確認したシグネチャ: `WaitFrameSync(uint32_t nTimeoutMs) -> EVROverlayError`(オーバーレイハンドル引数なし、グローバルな同期待ち)、`TriggerLaserMouseHapticVibration(VROverlayHandle_t, float fDurationSeconds, float fFrequency, float fAmplitude) -> EVROverlayError`
+  - `ffi.rs`: `wait_frame_sync`/`trigger_laser_mouse_haptic_vibration`フィールドを`PlaceholderFn`から実シグネチャに変更。フィールド順序・個数は不変のため`OVERLAY_FN_TABLE_FIELD_COUNT=82`トリップワイヤーはそのまま
+  - `session.rs`: メインループの固定インターバル`snapshot_rx.recv_timeout(Duration::from_millis(33))`を、`wait_frame_sync(&lib, 100)`呼び出し(コンポジタの次フレームに同期。エラー/タイムアウトでも描画自体は継続)+`snapshot_rx.try_recv()`に変更——固定タイマーでのポーリングから、コンポジタのフレームペースに揃える方式にした。`wait_frame_sync`/`trigger_laser_mouse_haptic_vibration`ヘルパー関数を既存の`show_overlay`等と同じエラーハンドリング形式で追加。`renderer.render()`が1件以上の`OverlayAction`を返した(=クリックが成立した)タイミングで`trigger_laser_mouse_haptic_vibration`を呼び、短い振動(0.05秒/40Hz/振幅1.0——感触は未調整の初期値)でクリック成立をユーザーに触覚フィードバックする。未使用になった`use std::time::Duration`は削除
+  - `cargo test`(30件、host)/`cargo build`(host)/`cargo build --target x86_64-pc-windows-gnu`(警告ゼロ)/`cargo fmt --check`全て確認済み。`cargo clippy --all-targets -- -D warnings`は続報2修正時のエラー集合(11件)と完全一致(新規リグレッション無し)
+  - このWSL環境はSteamVR実行不可のため、`WaitFrameSync`によるペーシングが実機で不自然なラグ/カクつきを生まないか、ハプティクスの強さ・長さが感触として適切かは改めて実機でのユーザー確認が必要。これでTODO.mdのSteamVR関連タスクのうちStage1-4は全て完了(残りは別見出しの「SteamVR Overlay UI 改善: タイトルを追加」のみ)
+
+## [ ] SteamVR Overlay UI 改善: タイトルを追加
+
+頭に一回り大きいフォントで "VRC Companion" と表示する
+
+## [ ] SteamVR Overlay UI 改善: チャットのテキスト表示領域を追加
+
+
