@@ -1,6 +1,7 @@
 .PHONY: build test clean fmt lint
 
 WINDOWS_TARGET := x86_64-pc-windows-gnu
+INSTALL_DIR := ~/apps/vrc-companion
 
 # WSL の GPU パススルー無しの環境では GUI が正常に動かないため、
 # Windows ネイティブ実行ファイルをビルドして Windows 側で実行する
@@ -11,6 +12,10 @@ build:
 
 run: build
 	./target/$(WINDOWS_TARGET)/release/vrc-companion.exe
+
+install: build
+	mkdir -p $(INSTALL_DIR)
+	cp target/$(WINDOWS_TARGET)/release/vrc-companion.exe $(INSTALL_DIR)
 
 test:
 	cargo test

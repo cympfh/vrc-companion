@@ -10,9 +10,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use super::bridge::{OverlayAction, OverlayHandle, OverlaySnapshot};
 use super::ffi::{self, OpenVrLibrary, Texture_t, VrOverlayHandle};
+use super::manifest;
 use super::render::GlOverlayRenderer;
 
-const OVERLAY_KEY: &str = "cympfh.vrc_companion";
 const OVERLAY_NAME: &str = "VRC Companion";
 const OVERLAY_WIDTH: u32 = 400;
 const OVERLAY_HEIGHT: u32 = 380;
@@ -44,6 +44,8 @@ fn run(
             return;
         }
     };
+
+    ensure_auto_launch_registered(&lib);
 
     let overlay_handle = match create_dashboard_overlay(&lib) {
         Ok(h) => h,
@@ -176,8 +178,52 @@ fn poll_overlay_events(lib: &OpenVrLibrary, handle: VrOverlayHandle) -> Vec<egui
     events
 }
 
+/// SteamVR起動時にこのexeを自動起動してもらうよう、アプリケーションマニフェストを登録する。
+/// IVRApplicationsインターフェース取得失敗・マニフェスト書き込み失敗はいずれも非致命的に扱い、
+/// オーバーレイ本体の起動をブロックしない(既存のSetOverlayInputMethod等と同じパターン)。
+fn ensure_auto_launch_registered(lib: &OpenVrLibrary) {
+    let Some(applications) = lib.applications() else {
+        return;
+    };
+
+    let path = match manifest::write_manifest() {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("[SteamVR] マニフェスト書き込み失敗: {}", e);
+            return;
+        }
+    };
+
+    let path_c = match CString::new(path.to_string_lossy().into_owned()) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[SteamVR] マニフェストパスのCString化失敗: {}", e);
+            return;
+        }
+    };
+    let err =
+        unsafe { (applications.add_application_manifest)(path_c.as_ptr() as *mut c_char, false) };
+    if err != 0 {
+        eprintln!(
+            "[SteamVR] AddApplicationManifest 失敗: EVRApplicationError={}",
+            err
+        );
+        return;
+    }
+
+    let key = CString::new(manifest::APP_KEY).unwrap();
+    let err =
+        unsafe { (applications.set_application_auto_launch)(key.as_ptr() as *mut c_char, true) };
+    if err != 0 {
+        eprintln!(
+            "[SteamVR] SetApplicationAutoLaunch 失敗: EVRApplicationError={}",
+            err
+        );
+    }
+}
+
 fn create_dashboard_overlay(lib: &OpenVrLibrary) -> Result<VrOverlayHandle, String> {
-    let key = CString::new(OVERLAY_KEY).unwrap();
+    let key = CString::new(manifest::APP_KEY).unwrap();
     let name = CString::new(OVERLAY_NAME).unwrap();
     let mut main_handle: VrOverlayHandle = 0;
     let mut thumbnail_handle: VrOverlayHandle = 0;

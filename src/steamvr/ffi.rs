@@ -7,7 +7,8 @@
 //!
 //! フィールドの型・順序は公式ヘッダ
 //! https://github.com/ValveSoftware/openvr/blob/master/headers/openvr_capi.h
-//! (取得日 2026-07-01) から逐語的に転記した。順序はABIクリティカル — 変更しないこと。
+//! (取得日 2026-07-01、IVRApplicationsは2026-07-02) から逐語的に転記した。
+//! 順序はABIクリティカル — 変更しないこと。
 //! 実際に呼び出さないフィールドは、正しい順序・サイズを保つためのプレースホルダ
 //! (`PlaceholderFn`) にしている。
 
@@ -15,11 +16,13 @@ use libloading::Library;
 use std::ffi::{c_char, c_void};
 
 pub const IVROVERLAY_VERSION: &str = "IVROverlay_028";
+pub const IVRAPPLICATIONS_VERSION: &str = "IVRApplications_008";
 const VR_APPLICATION_TYPE_OVERLAY: i32 = 2;
 
 pub type VrOverlayHandle = u64;
 pub type EVRInitError = i32;
 pub type EVROverlayError = i32;
+pub type EVRApplicationError = i32;
 
 pub type ETextureType = i32;
 pub const TEXTURE_TYPE_OPENGL: ETextureType = 1;
@@ -177,11 +180,51 @@ pub struct VrIvOverlayFnTable {
 #[cfg(test)]
 const OVERLAY_FN_TABLE_FIELD_COUNT: usize = 82;
 
+#[repr(C)]
+pub struct VrIvApplicationsFnTable {
+    pub add_application_manifest: unsafe extern "C" fn(*mut c_char, bool) -> EVRApplicationError,
+    pub remove_application_manifest: PlaceholderFn,
+    pub is_application_installed: unsafe extern "C" fn(*mut c_char) -> bool,
+    pub get_application_count: PlaceholderFn,
+    pub get_application_key_by_index: PlaceholderFn,
+    pub get_application_key_by_process_id: PlaceholderFn,
+    pub launch_application: PlaceholderFn,
+    pub launch_template_application: PlaceholderFn,
+    pub launch_application_from_mime_type: PlaceholderFn,
+    pub launch_dashboard_overlay: PlaceholderFn,
+    pub cancel_application_launch: PlaceholderFn,
+    pub identify_application: PlaceholderFn,
+    pub get_application_process_id: PlaceholderFn,
+    pub get_applications_error_name_from_enum: PlaceholderFn,
+    pub get_application_property_string: PlaceholderFn,
+    pub get_application_property_bool: PlaceholderFn,
+    pub get_application_property_uint64: PlaceholderFn,
+    pub set_application_auto_launch: unsafe extern "C" fn(*mut c_char, bool) -> EVRApplicationError,
+    pub get_application_auto_launch: unsafe extern "C" fn(*mut c_char) -> bool,
+    pub set_default_application_for_mime_type: PlaceholderFn,
+    pub get_default_application_for_mime_type: PlaceholderFn,
+    pub get_application_supported_mime_types: PlaceholderFn,
+    pub get_applications_that_support_mime_type: PlaceholderFn,
+    pub get_application_launch_arguments: PlaceholderFn,
+    pub get_starting_application: PlaceholderFn,
+    pub get_scene_application_state: PlaceholderFn,
+    pub perform_application_prelaunch_check: PlaceholderFn,
+    pub get_scene_application_state_name_from_enum: PlaceholderFn,
+    pub launch_internal_process: PlaceholderFn,
+    pub register_subprocess: PlaceholderFn,
+    pub get_current_scene_process_id: PlaceholderFn,
+}
+
+/// `VR_IVRApplications_FnTable` の総フィールド数(公式ヘッダより逐語転記で確認した数)。
+#[cfg(test)]
+const APPLICATIONS_FN_TABLE_FIELD_COUNT: usize = 31;
+
 /// openvr_api.dll をロードし、IVROverlay の関数ポインタテーブルを保持する。
 /// `_lib` が生きている間だけ `overlay_table` は有効。
 pub struct OpenVrLibrary {
     _lib: Library,
     overlay_table: *const VrIvOverlayFnTable,
+    applications_table: Option<*const VrIvApplicationsFnTable>,
 }
 
 impl OpenVrLibrary {
@@ -215,14 +258,37 @@ impl OpenVrLibrary {
             ));
         }
 
+        // IVRApplications は自動起動登録(SteamVR起動時にこのexeを立ち上げてもらう)のためだけに
+        // 使う補助インターフェース。取得できなくてもオーバーレイ本体には影響させない(non-fatal)。
+        let applications_version =
+            std::ffi::CString::new(format!("FnTable:{}", IVRAPPLICATIONS_VERSION)).unwrap();
+        let mut applications_iface_error: EVRInitError = 0;
+        let applications_table_ptr = unsafe {
+            vr_get_generic_interface(applications_version.as_ptr(), &mut applications_iface_error)
+        };
+        let applications_table = if applications_iface_error != 0 || applications_table_ptr == 0 {
+            eprintln!(
+                "[SteamVR] IVRApplications インターフェース取得失敗 (自動起動登録は無効): code={}",
+                applications_iface_error
+            );
+            None
+        } else {
+            Some(applications_table_ptr as *const VrIvApplicationsFnTable)
+        };
+
         Ok(Self {
             _lib: lib,
             overlay_table: table_ptr as *const VrIvOverlayFnTable,
+            applications_table,
         })
     }
 
     pub fn overlay(&self) -> &VrIvOverlayFnTable {
         unsafe { &*self.overlay_table }
+    }
+
+    pub fn applications(&self) -> Option<&VrIvApplicationsFnTable> {
+        self.applications_table.map(|ptr| unsafe { &*ptr })
     }
 }
 
@@ -246,6 +312,15 @@ mod tests {
             std::mem::size_of::<VrIvOverlayFnTable>(),
             OVERLAY_FN_TABLE_FIELD_COUNT * std::mem::size_of::<usize>(),
             "VR_IVROverlay_FnTable のフィールド数が公式ヘッダと食い違っている可能性がある"
+        );
+    }
+
+    #[test]
+    fn test_applications_fn_table_field_count_matches_official_header() {
+        assert_eq!(
+            std::mem::size_of::<VrIvApplicationsFnTable>(),
+            APPLICATIONS_FN_TABLE_FIELD_COUNT * std::mem::size_of::<usize>(),
+            "VR_IVRApplications_FnTable のフィールド数が公式ヘッダと食い違っている可能性がある"
         );
     }
 
