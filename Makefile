@@ -10,12 +10,12 @@ build:
 	cargo build --release --target $(WINDOWS_TARGET)
 	@echo "生成物: target/$(WINDOWS_TARGET)/release/vrc-companion.exe"
 
-run: build
-	./target/$(WINDOWS_TARGET)/release/vrc-companion.exe
-
 install: build
 	mkdir -p $(INSTALL_DIR)
 	cp target/$(WINDOWS_TARGET)/release/vrc-companion.exe $(INSTALL_DIR)
+
+run: install
+	$(INSTALL_DIR)/vrc-companion.exe
 
 test:
 	cargo test

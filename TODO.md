@@ -202,3 +202,9 @@ OpenVRの`IVRApplications`インターフェース(`AddApplicationManifest`+`Set
 - `session.rs`: 既存のローカル`OVERLAY_KEY`定数を削除し`manifest::APP_KEY`(`"cympfh.vrc_companion"`)に統一——`CreateDashboardOverlay`のキーと登録アプリの`app_key`はOpenVR仕様上一致させる必要があるため、単一のソースにした。`run()`内`OpenVrLibrary::load()`成功直後に`ensure_auto_launch_registered(&lib)`を呼ぶよう追加。この関数は`lib.applications()`が`None`(IVRApplications取得失敗)なら即return、`write_manifest()`失敗も`AddApplicationManifest`/`SetApplicationAutoLaunch`のエラーコードも全て既存の`eprintln!`+継続パターンで非致命的に扱う
 - `cargo test`(32件、host。manifest.rsの新規2件含む)/`cargo build`(host)/`cargo build --target x86_64-pc-windows-gnu`(警告ゼロ)全て確認済み。`cargo clippy --all-targets -- -D warnings`(host/windowsターゲット両方)は`git stash`比較で今回の追加コード(ffi.rs/manifest.rs/session.rsの新規部分)には指摘無しを確認——既存の`config.rs`/`bridge.rs`のclippyエラー(`field_reassign_with_default`×4、`bridge.rs`の`type_complexity`)と`session.rs:105`の`collapsible_if`はいずれも今回の変更前から存在する既存debtで、スコープ外として対応していない
 - このWSL環境はSteamVR実行不可のため、実機でのSteamVR設定「起動/終了」ページへの表示・Auto-launch状態・SteamVR再起動時に実際にexeが自動起動するかは改めてユーザー確認が必要
+
+## [x] AFK トグルボタンを配置する [2026-08-05 実装→撤回]
+
+call QvPen ボタンの右隣に AFK トグルボタンを配置する
+
+- 実装したが `/input/AFKToggle` が公式未サポートで実機無効、End キー経路も検討後、**ユーザー指示で AFK 機能一式を削除して元に戻した**
