@@ -27,14 +27,26 @@ pub enum SessionEnd {
     SteamVrQuit,
     /// 知らせなしに vrserver.exe が居なくなった(落ちた・強制終了など)
     SteamVrGone,
+    /// このアプリの別のコピーがもう SteamVR にタブを出している(例: 手で起動したあとに
+    /// SteamVR の自動起動でもう1つ起動された)。このコピーは VR につなぐのをやめる
+    AnotherInstance,
     /// つないだあとの準備(オーバーレイ作成など)に失敗した
     Failed(String),
 }
 
 impl SessionEnd {
+    /// これで終わり(つなぎ直さない)か
+    pub fn stops_retrying(&self) -> bool {
+        matches!(self, SessionEnd::AppClosed | SessionEnd::AnotherInstance)
+    }
+
     pub fn message(&self) -> String {
         match self {
             SessionEnd::AppClosed => "アプリを閉じる".to_string(),
+            SessionEnd::AnotherInstance => {
+                "このアプリの別のコピーがもう SteamVR につないでいるので、こちらは VR につながない"
+                    .to_string()
+            }
             SessionEnd::SteamVrQuit => {
                 "SteamVR が終了したので切断した。SteamVR が起動したらつなぎ直す".to_string()
             }
@@ -141,6 +153,15 @@ mod tests {
                 .message()
                 .contains("やり直す")
         );
+    }
+
+    #[test]
+    fn only_app_exit_and_duplicate_stop_retrying() {
+        assert!(SessionEnd::AppClosed.stops_retrying());
+        assert!(SessionEnd::AnotherInstance.stops_retrying());
+        assert!(!SessionEnd::SteamVrQuit.stops_retrying());
+        assert!(!SessionEnd::SteamVrGone.stops_retrying());
+        assert!(!SessionEnd::Failed("x".into()).stops_retrying());
     }
 
     #[test]

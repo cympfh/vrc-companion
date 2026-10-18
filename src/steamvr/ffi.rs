@@ -74,6 +74,8 @@ pub struct Texture_t {
 
 /// SteamVR が終わる。AcknowledgeQuit_Exiting → VR_Shutdown をすぐ呼ぶ(呼ばないと数秒後にプロセスごと落とされる)
 pub const EVENT_QUIT: u32 = 700;
+/// EVROverlayError_KeyInUse: 同じキーのオーバーレイがもうある
+pub const OVERLAY_ERROR_KEY_IN_USE: i32 = 17;
 pub const EVENT_MOUSE_MOVE: u32 = 300;
 pub const EVENT_MOUSE_BUTTON_DOWN: u32 = 301;
 pub const EVENT_MOUSE_BUTTON_UP: u32 = 302;

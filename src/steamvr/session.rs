@@ -85,10 +85,10 @@ fn supervise(
                     connected.store(false, Ordering::SeqCst);
                     // オーバーレイ・レンダラ・入力は run_session の中で片付いている。ここで VR_Shutdown
                     drop(lib);
-                    if end == SessionEnd::AppClosed {
+                    status.log(&end.message());
+                    if end.stops_retrying() {
                         return;
                     }
-                    status.log(&end.message());
                 }
             }
         }
@@ -175,7 +175,10 @@ fn run_session(
 
     let overlay_handle = match create_dashboard_overlay(lib) {
         Ok(h) => h,
-        Err(e) => return SessionEnd::Failed(format!("CreateDashboardOverlay: {}", e)),
+        Err(DashboardError::KeyInUse) => return SessionEnd::AnotherInstance,
+        Err(DashboardError::Other(e)) => {
+            return SessionEnd::Failed(format!("CreateDashboardOverlay: {}", e));
+        }
     };
 
     if let Err(e) = show_overlay(lib, overlay_handle) {
@@ -419,6 +422,8 @@ fn ensure_auto_launch_registered(lib: &OpenVrLibrary, action_manifest: Option<&s
             "[SteamVR] SetApplicationAutoLaunch 失敗: EVRApplicationError={}",
             err
         );
+    } else {
+        eprintln!("[SteamVR] SteamVR の自動起動に登録した: {}", path.display());
     }
 }
 
@@ -690,7 +695,13 @@ impl SteamVrInput {
     }
 }
 
-fn create_dashboard_overlay(lib: &OpenVrLibrary) -> Result<VrOverlayHandle, String> {
+enum DashboardError {
+    /// 同じキーのタブがもうある(このアプリの別のコピーが動いている)
+    KeyInUse,
+    Other(String),
+}
+
+fn create_dashboard_overlay(lib: &OpenVrLibrary) -> Result<VrOverlayHandle, DashboardError> {
     let key = CString::new(manifest::APP_KEY).unwrap();
     let name = CString::new(OVERLAY_NAME).unwrap();
     let mut main_handle: VrOverlayHandle = 0;
@@ -704,8 +715,11 @@ fn create_dashboard_overlay(lib: &OpenVrLibrary) -> Result<VrOverlayHandle, Stri
             &mut thumbnail_handle,
         )
     };
+    if err == ffi::OVERLAY_ERROR_KEY_IN_USE {
+        return Err(DashboardError::KeyInUse);
+    }
     if err != 0 {
-        return Err(format!("EVROverlayError={}", err));
+        return Err(DashboardError::Other(format!("EVROverlayError={}", err)));
     }
     Ok(main_handle)
 }
