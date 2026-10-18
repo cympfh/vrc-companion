@@ -1,7 +1,7 @@
 //! SteamVR オーバーレイの中身(egui)。描画先(WGL / テスト)に依存しないので全OSでテストできる。
 //!
 //! 見た目: 暗い背景にカードを並べる。上から、見出しと録音中の表示 → Start/Stop と QvPen の大きなボタン →
-//! 送り先・Eliza の2枚のカード(各行は右端にスイッチ) → ボタン割り当て(SteamVR)のカード →
+//! 送り先・Eliza の2枚のカード(各行は右端にスイッチ) → 「キー割り当て変更」ボタン →
 //! 認識結果のカード。
 //! 座標はすべて論理ピクセル(`LOGICAL_W` × `LOGICAL_H`)。実際のテクスチャは
 //! `PIXELS_PER_POINT` 倍の解像度で描くので、大きく表示しても文字がぼやけない。
@@ -9,13 +9,11 @@
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{Color32, FontId, Pos2, Rect, Rounding, Sense, Stroke, pos2, vec2};
 
-use super::bridge::{
-    InputStatus, InputView, OverlayAction, OverlayField, OverlaySnapshot, overlay_fields,
-};
+use super::bridge::{OverlayAction, OverlayField, OverlaySnapshot, overlay_fields};
 
 /// UI の論理サイズ(マウス座標もこの単位)
 pub const LOGICAL_W: f32 = 600.0;
-pub const LOGICAL_H: f32 = 790.0;
+pub const LOGICAL_H: f32 = 686.0;
 /// テクスチャの解像度 = 論理サイズ × これ
 pub const PIXELS_PER_POINT: f32 = 2.0;
 
@@ -31,7 +29,6 @@ pub(super) mod color {
     pub const RECORD: Color32 = Color32::from_rgb(0xe5, 0x48, 0x4d);
     pub const TRACK_OFF: Color32 = Color32::from_rgb(0x3a, 0x3f, 0x4b);
     pub const SECONDARY: Color32 = Color32::from_rgb(0x2a, 0x2f, 0x3a);
-    pub const FIRED: Color32 = Color32::from_rgb(0x3d, 0xd6, 0x8c);
 }
 
 const PAD: f32 = 20.0;
@@ -134,16 +131,23 @@ pub fn draw(
             );
             y += h1.max(h2) + GAP;
 
-            // ボタン割り当て(SteamVR)
-            let h3 = binding_card(
+            // SteamVR のキー割り当て画面を VR の中に開く
+            let bind_rect = Rect::from_min_size(pos2(left, y), vec2(width, 52.0));
+            if big_button(
                 ui,
-                &snapshot.input,
-                pos2(left, y),
-                width,
-                &mut clicked,
-                &mut targets,
-            );
-            y += h3 + GAP;
+                "open_binding_ui",
+                bind_rect,
+                "キー割り当て変更",
+                color::SECONDARY,
+                color::TEXT,
+            ) {
+                clicked.push(OverlayAction::OpenBindingUi);
+            }
+            targets.push(HitTarget {
+                action: OverlayAction::OpenBindingUi,
+                rect: bind_rect,
+            });
+            y += 52.0 + GAP;
 
             // 認識結果
             let text_rect =
@@ -313,136 +317,6 @@ fn toggle_card(
     height
 }
 
-/// SteamVR のボタン割り当てのカード。操作ごとに、いま割り当てられているボタンを出す。
-/// 押されると少しの間「反応」が点く(動作確認用)。右上に割り当て画面を開くボタン。高さを返す。
-fn binding_card(
-    ui: &mut egui::Ui,
-    view: &InputView,
-    min: Pos2,
-    width: f32,
-    clicked: &mut Vec<OverlayAction>,
-    targets: &mut Vec<HitTarget>,
-) -> f32 {
-    let title_h = 60.0;
-    let row_h = 30.0;
-    let rows = match view.status {
-        InputStatus::Ready => view.actions.len().max(1),
-        _ => 1,
-    };
-    let height = title_h + row_h * rows as f32 + 14.0;
-    let rect = Rect::from_min_size(min, vec2(width, height));
-    card(ui, rect);
-    ui.painter().text(
-        pos2(rect.left() + 20.0, rect.top() + 30.0),
-        egui::Align2::LEFT_CENTER,
-        "ボタン割り当て（SteamVR）",
-        FontId::proportional(14.0),
-        color::CAPTION,
-    );
-    let btn = Rect::from_min_size(
-        pos2(rect.right() - 8.0 - 200.0, rect.top() + 8.0),
-        vec2(200.0, 44.0),
-    );
-    if small_button(ui, "open_binding_ui", btn, "割り当てを変える") {
-        clicked.push(OverlayAction::OpenBindingUi);
-    }
-    targets.push(HitTarget {
-        action: OverlayAction::OpenBindingUi,
-        rect: btn,
-    });
-
-    let p = ui.painter_at(rect.shrink(2.0));
-    let mut y = rect.top() + title_h;
-    let label_x = rect.left() + 20.0;
-    let value_x = rect.left() + 190.0;
-    let message = match &view.status {
-        InputStatus::Starting => Some("SteamVR に接続中…".to_string()),
-        InputStatus::Unavailable(why) => Some(format!("使えません: {}", why)),
-        InputStatus::Ready if view.actions.is_empty() => Some("操作がありません".to_string()),
-        InputStatus::Ready => None,
-    };
-    if let Some(m) = message {
-        p.text(
-            pos2(label_x, y + row_h / 2.0),
-            egui::Align2::LEFT_CENTER,
-            m,
-            FontId::proportional(15.0),
-            color::SUBTEXT,
-        );
-        return height;
-    }
-    for a in &view.actions {
-        let cy = y + row_h / 2.0;
-        p.text(
-            pos2(label_x, cy),
-            egui::Align2::LEFT_CENTER,
-            a.label,
-            FontId::proportional(16.0),
-            color::TEXT,
-        );
-        let (value, col) = if a.bindings.is_empty() {
-            ("未割り当て".to_string(), color::CAPTION)
-        } else {
-            (a.bindings.join(" / "), color::SUBTEXT)
-        };
-        let fired_w = if a.fired { 64.0 } else { 0.0 };
-        let mut job = LayoutJob::single_section(
-            value,
-            TextFormat {
-                font_id: FontId::proportional(15.0),
-                color: col,
-                ..Default::default()
-            },
-        );
-        job.wrap = TextWrapping {
-            max_width: rect.right() - 20.0 - fired_w - value_x,
-            max_rows: 1,
-            break_anywhere: true,
-            overflow_character: Some('…'),
-        };
-        let g = ui.fonts(|f| f.layout_job(job));
-        p.galley(pos2(value_x, cy - g.size().y / 2.0), g, col);
-        if a.fired {
-            let pill =
-                Rect::from_center_size(pos2(rect.right() - 20.0 - 28.0, cy), vec2(56.0, 24.0));
-            p.rect_filled(
-                pill,
-                Rounding::same(12.0),
-                Color32::from_rgba_unmultiplied(0x3d, 0xd6, 0x8c, 48),
-            );
-            p.text(
-                pill.center(),
-                egui::Align2::CENTER_CENTER,
-                "反応",
-                FontId::proportional(14.0),
-                color::FIRED,
-            );
-        }
-        y += row_h;
-    }
-    height
-}
-
-/// カードの中の小さめのボタン。押されたら true。
-fn small_button(ui: &mut egui::Ui, id: &str, rect: Rect, label: &str) -> bool {
-    let resp = ui.interact(rect, ui.id().with(id), Sense::click());
-    let p = ui.painter();
-    p.rect_filled(rect, Rounding::same(10.0), color::SECONDARY);
-    if resp.is_pointer_button_down_on() {
-        p.rect_filled(rect, Rounding::same(10.0), Color32::from_black_alpha(60));
-    } else if resp.hovered() {
-        p.rect_filled(rect, Rounding::same(10.0), Color32::from_white_alpha(22));
-    }
-    p.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        FontId::proportional(16.0),
-        color::TEXT,
-    );
-    resp.clicked()
-}
-
 /// 44×26 のスイッチ。`t` は 0(オフ)〜1(オン)。
 fn switch(ui: &egui::Ui, min: Pos2, t: f32) {
     let rect = Rect::from_min_size(min, vec2(44.0, 26.0));
@@ -533,31 +407,6 @@ mod tests {
             last_translated_response:
                 "Hello, this is a fairly long translated sentence that should wrap onto more lines"
                     .to_string(),
-            input: sample_input(),
-        }
-    }
-
-    fn sample_input() -> InputView {
-        use super::super::bridge::ActionView;
-        InputView {
-            status: InputStatus::Ready,
-            actions: vec![
-                ActionView {
-                    label: "録音を開始",
-                    bindings: vec!["左手 十字キー下（2回押し）".to_string()],
-                    fired: true,
-                },
-                ActionView {
-                    label: "録音の開始/停止",
-                    bindings: vec![],
-                    fired: false,
-                },
-                ActionView {
-                    label: "QvPen を呼ぶ",
-                    bindings: vec!["右手 B（長押し）".to_string(), "左手 Y".to_string()],
-                    fired: false,
-                },
-            ],
         }
     }
 
@@ -592,7 +441,7 @@ mod tests {
         setup_style(&ctx);
         let s = snapshot();
         let (_, targets) = frame(&ctx, &s, vec![]);
-        // Start/Stop、QvPen、スイッチ 7 つ、割り当てを変える
+        // Start/Stop、QvPen、スイッチ 7 つ、キー割り当て変更
         assert_eq!(targets.len(), 10);
         for t in &targets {
             let (clicked, _) = frame(&ctx, &s, click(t.rect.center()));
@@ -637,8 +486,8 @@ mod tests {
     }
 
     #[test]
-    fn binding_card_leaves_room_for_the_text_card() {
-        // 割り当てカードが入っても、認識結果のカードに十分な高さが残る
+    fn binding_button_leaves_room_for_the_text_card() {
+        // キー割り当て変更のボタンの下に、認識結果のカードの高さが十分残る
         let ctx = egui::Context::default();
         let s = snapshot();
         let (_, targets) = frame(&ctx, &s, vec![]);
@@ -646,10 +495,8 @@ mod tests {
             .iter()
             .find(|t| t.action == OverlayAction::OpenBindingUi)
             .unwrap();
-        // ボタン(カード上端+8) + カードの残り(60-8 + 3行×30 + 14) + 間隔 → 認識結果のカード
-        let card_bottom = open.rect.top() - 8.0 + 60.0 + 30.0 * 3.0 + 14.0;
         assert!(
-            LOGICAL_H - 20.0 - (card_bottom + 14.0) >= 150.0,
+            LOGICAL_H - 20.0 - (open.rect.bottom() + 14.0) >= 150.0,
             "認識結果のカードが狭すぎる"
         );
     }

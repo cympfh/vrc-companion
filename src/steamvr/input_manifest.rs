@@ -172,49 +172,6 @@ pub fn build_empty_binding_json(controller_type: &str) -> String {
     .unwrap()
 }
 
-/// SteamVR が返す割り当て(GetActionBindingInfo)を日本語の短い説明にする。
-/// 例: ("/user/hand/left", "/input/dpad_down", "double") → "左手 十字キー下（2回押し）"
-pub fn describe_binding(device_path: &str, input_path: &str, slot: &str) -> String {
-    let hand = match device_path {
-        p if p.ends_with("/hand/left") => "左手 ",
-        p if p.ends_with("/hand/right") => "右手 ",
-        p if p.ends_with("/head") => "ヘッドセット ",
-        _ => "",
-    };
-    let name = input_path.rsplit('/').next().unwrap_or(input_path);
-    let button = match name {
-        "dpad_up" => "十字キー上".to_string(),
-        "dpad_down" => "十字キー下".to_string(),
-        "dpad_left" => "十字キー左".to_string(),
-        "dpad_right" => "十字キー右".to_string(),
-        "trigger" => "トリガー".to_string(),
-        "grip" => "グリップ".to_string(),
-        "bumper" => "バンパー".to_string(),
-        "thumbstick" | "joystick" => "スティック".to_string(),
-        "trackpad" => "トラックパッド".to_string(),
-        "system" => "システム".to_string(),
-        "menu" => "メニュー".to_string(),
-        "view" => "ビュー".to_string(),
-        "thumbrest" => "サムレスト".to_string(),
-        n if n.len() == 1 => n.to_uppercase(),
-        n => n.to_string(),
-    };
-    let how = match slot {
-        "" | "click" => "",
-        "double" => "（2回押し）",
-        "long" => "（長押し）",
-        "held" => "（押している間）",
-        "touch" => "（タッチ）",
-        _ => "",
-    };
-    let how = if how.is_empty() && !matches!(slot, "" | "click") {
-        format!("（{}）", slot)
-    } else {
-        how.to_string()
-    };
-    format!("{}{}{}", hand, button, how)
-}
-
 /// アクションマニフェストと既定バインドを `dir` に書き、マニフェストのフルパスを返す。
 /// 毎回上書きする(ユーザーが SteamVR で変えたバインドは SteamVR 側に保存されるので消えない)
 pub fn write_input_files(dir: &Path) -> Result<PathBuf, String> {
@@ -300,26 +257,6 @@ mod tests {
         assert_eq!(
             src["inputs"]["double"]["output"],
             InputAction::StartRecording.path()
-        );
-    }
-
-    #[test]
-    fn test_describe_binding_in_japanese() {
-        assert_eq!(
-            describe_binding("/user/hand/left", "/input/dpad_down", "double"),
-            "左手 十字キー下（2回押し）"
-        );
-        assert_eq!(
-            describe_binding("/user/hand/right", "/input/a", "click"),
-            "右手 A"
-        );
-        assert_eq!(
-            describe_binding("/user/hand/right", "/input/trigger", "long"),
-            "右手 トリガー（長押し）"
-        );
-        assert_eq!(
-            describe_binding("/user/hand/left", "/input/thumbstick", "north"),
-            "左手 スティック（north）"
         );
     }
 

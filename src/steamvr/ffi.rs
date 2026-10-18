@@ -47,27 +47,6 @@ pub struct VRActiveActionSet_t {
     pub n_priority: i32,
 }
 
-/// アクションに割り当てられたボタンの数の上限(k_unMaxActionOriginCount)
-pub const MAX_ACTION_ORIGIN_COUNT: usize = 16;
-/// GetOriginLocalizedName: 手(左手/右手) + ボタン名
-pub const INPUT_STRING_HAND_AND_SOURCE: i32 = 0x01 | 0x04;
-
-/// `InputBindingInfo_t`(openvr.h)。例: "/user/hand/left", "/input/dpad_down", "button", "double"
-#[repr(C)]
-pub struct InputBindingInfo_t {
-    pub rch_device_path_name: [u8; 128],
-    pub rch_input_path_name: [u8; 128],
-    pub rch_mode_name: [u8; 128],
-    pub rch_slot_name: [u8; 128],
-    pub rch_input_source_type: [u8; 32],
-}
-
-/// NUL 終端の C 文字列バッファ → String
-pub fn c_buf_to_string(buf: &[u8]) -> String {
-    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    String::from_utf8_lossy(&buf[..end]).into_owned()
-}
-
 /// `InputDigitalActionData_t`(openvr.h、Windows は pack 8)
 #[repr(C)]
 #[derive(Default)]
@@ -321,22 +300,10 @@ pub struct VrIvInputFnTable {
     pub get_skeletal_bone_data_compressed: PlaceholderFn,
     pub decompress_skeletal_bone_data: PlaceholderFn,
     pub trigger_haptic_vibration_action: PlaceholderFn,
-    pub get_action_origins: unsafe extern "C" fn(
-        VRActionSetHandle_t,
-        VRActionHandle_t,
-        *mut VRInputValueHandle_t,
-        u32,
-    ) -> EVRInputError,
-    pub get_origin_localized_name:
-        unsafe extern "C" fn(VRInputValueHandle_t, *mut c_char, u32, i32) -> EVRInputError,
+    pub get_action_origins: PlaceholderFn,
+    pub get_origin_localized_name: PlaceholderFn,
     pub get_origin_tracked_device_info: PlaceholderFn,
-    pub get_action_binding_info: unsafe extern "C" fn(
-        VRActionHandle_t,
-        *mut InputBindingInfo_t,
-        u32,
-        u32,
-        *mut u32,
-    ) -> EVRInputError,
+    pub get_action_binding_info: PlaceholderFn,
     pub show_action_origins: PlaceholderFn,
     pub show_bindings_for_action_set: PlaceholderFn,
     pub get_component_state_for_binding: PlaceholderFn,
@@ -493,8 +460,6 @@ mod tests {
         assert_eq!(std::mem::size_of::<VRActiveActionSet_t>(), 32);
         // InputDigitalActionData_t: bool(+7) + u64 + bool + bool(+2) + f32 = 24
         assert_eq!(std::mem::size_of::<InputDigitalActionData_t>(), 24);
-        // InputBindingInfo_t: 128×4 + 32 = 544
-        assert_eq!(std::mem::size_of::<InputBindingInfo_t>(), 544);
         assert_eq!(std::mem::size_of::<HmdMatrix34_t>(), 48);
     }
 

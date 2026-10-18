@@ -2,11 +2,10 @@
 //! 本物の描画経路(WGL + egui_glow)で BMP に書き出す。見た目の確認・README 用。
 //! サンプルの文字列は合成データ。
 
-use super::bridge::{ActionView, InputStatus, InputView, OverlaySnapshot};
+use super::bridge::OverlaySnapshot;
 use super::overlay_ui::PIXELS_PER_POINT;
 use super::render::GlOverlayRenderer;
 use super::session::{OVERLAY_HEIGHT, OVERLAY_WIDTH};
-use super::settings_ui;
 use super::toast_ui::{self, ToastKind};
 
 fn samples() -> Vec<(&'static str, OverlaySnapshot)> {
@@ -24,26 +23,6 @@ fn samples() -> Vec<(&'static str, OverlaySnapshot)> {
         last_eliza_response: String::new(),
         last_translated_response: "Hello, nice weather today. Want to go world hopping later?"
             .to_string(),
-        input: InputView {
-            status: InputStatus::Ready,
-            actions: vec![
-                ActionView {
-                    label: "録音を開始",
-                    bindings: vec!["左手 十字キー下（2回押し）".to_string()],
-                    fired: true,
-                },
-                ActionView {
-                    label: "録音の開始/停止",
-                    bindings: vec![],
-                    fired: false,
-                },
-                ActionView {
-                    label: "QvPen を呼ぶ",
-                    bindings: vec!["右手 B（長押し）".to_string()],
-                    fired: false,
-                },
-            ],
-        },
     };
     let recording = OverlaySnapshot {
         is_recording: true,
@@ -87,20 +66,6 @@ pub fn dump_overlay(prefix: &str) -> Result<(), String> {
         write_current(&mut toast, prefix, name)?;
     }
 
-    // デスクトップの設定画面の「SteamVR ボタン割り当て」欄(egui 標準の暗い見た目で)
-    let view = samples().remove(0).1.input;
-    let mut settings = GlOverlayRenderer::new(1160, 300, PIXELS_PER_POINT)?;
-    for _ in 0..3 {
-        settings.render_ui(Vec::new(), |ctx| {
-            ctx.set_visuals(egui::Visuals::dark());
-            ctx.style_mut(|s| s.text_styles = egui::Style::default().text_styles);
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.label(egui::RichText::new("SteamVR ボタン割り当て").strong());
-                settings_ui::bindings_section(ui, &view);
-            });
-        })?;
-    }
-    write_current(&mut settings, prefix, "settings")?;
     Ok(())
 }
 

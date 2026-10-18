@@ -276,37 +276,22 @@ impl App {
         }
     }
 
-    /// VR オーバーレイ側から受け取ったアクションを Config に適用する。
-    /// 排他制御は既存の `enable_*_exclusive` を再利用する（Configの単一ソースを保つ）。
-    /// 設定画面の「SteamVR ボタン割り当て」。いま割り当てられているボタンと、押されたときの反応を出す
-    fn steamvr_bindings_section(&self, ui: &mut egui::Ui) {
-        use steamvr::{BindingButton, OverlayCommand};
-        ui.label(egui::RichText::new("SteamVR ボタン割り当て").strong());
+    /// SteamVR が動いているときだけ「キー割り当て変更」(SteamVR の割り当て画面を PC の画面に開く)
+    fn steamvr_bindings_button(&self, ui: &mut egui::Ui) {
         let Some(overlay) = self.steamvr_overlay.as_ref() else {
-            ui.label("SteamVR が動いていないので使えません");
             return;
         };
-        let view = overlay
-            .input_view
-            .lock()
-            .map(|v| v.clone())
-            .unwrap_or_default();
-        match steamvr::bindings_section(ui, &view) {
-            Some(BindingButton::OnDesktop) => {
-                let _ = overlay
-                    .command_tx
-                    .send(OverlayCommand::OpenBindingUi { on_desktop: true });
-            }
-            Some(BindingButton::InVr) => {
-                let _ = overlay
-                    .command_tx
-                    .send(OverlayCommand::OpenBindingUi { on_desktop: false });
-            }
-            Some(BindingButton::Browser) => open_binding_page_in_browser(),
-            None => {}
+        ui.add_space(10.0);
+        ui.separator();
+        if ui.button("キー割り当て変更").clicked() {
+            let _ = overlay
+                .command_tx
+                .send(steamvr::OverlayCommand::OpenBindingUi);
         }
     }
 
+    /// VR オーバーレイ側から受け取ったアクションを Config に適用する。
+    /// 排他制御は既存の `enable_*_exclusive` を再利用する（Configの単一ソースを保つ）。
     fn apply_steamvr_action(&mut self, action: OverlayAction) {
         match action {
             OverlayAction::ToggleClipboard => {
@@ -506,9 +491,7 @@ impl eframe::App for App {
                             .logarithmic(true),
                     );
 
-                    ui.add_space(10.0);
-                    ui.separator();
-                    self.steamvr_bindings_section(ui);
+                    self.steamvr_bindings_button(ui);
 
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
@@ -879,19 +862,5 @@ impl eframe::App for App {
         if self.is_transcribing {
             ctx.request_repaint();
         }
-    }
-}
-
-/// SteamVR のバインド画面を PC のブラウザで開く(SteamVR が動いている間だけ開ける)
-fn open_binding_page_in_browser() {
-    const URL: &str = "http://localhost:27062/dashboard/controllerbinding.html";
-    #[cfg(windows)]
-    let r = std::process::Command::new("cmd")
-        .args(["/C", "start", "", URL])
-        .spawn();
-    #[cfg(not(windows))]
-    let r = std::process::Command::new("xdg-open").arg(URL).spawn();
-    if let Err(e) = r {
-        eprintln!("ブラウザを開けなかった: {}", e);
     }
 }

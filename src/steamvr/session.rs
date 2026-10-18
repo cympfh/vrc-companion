@@ -7,13 +7,9 @@
 
 use std::ffi::{CString, c_char, c_void};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::bridge::{
-    ActionView, InputStatus, InputView, OverlayAction, OverlayCommand, OverlayHandle,
-    OverlaySnapshot,
-};
+use super::bridge::{OverlayAction, OverlayCommand, OverlayHandle, OverlaySnapshot};
 use super::ffi::{self, OpenVrLibrary, Texture_t, VrOverlayHandle};
 use super::input_manifest::{self, InputAction};
 use super::manifest;
@@ -30,25 +26,14 @@ pub fn start(initial: OverlaySnapshot, width_m: f32) -> Option<OverlayHandle> {
     let (snapshot_tx, snapshot_rx) = mpsc::channel::<OverlaySnapshot>();
     let (action_tx, action_rx) = mpsc::channel::<OverlayAction>();
     let (command_tx, command_rx) = mpsc::channel::<OverlayCommand>();
-    let input_view = Arc::new(Mutex::new(InputView::default()));
 
-    let shared = input_view.clone();
-    std::thread::spawn(move || run(initial, width_m, snapshot_rx, action_tx, command_rx, shared));
+    std::thread::spawn(move || run(initial, width_m, snapshot_rx, action_tx, command_rx));
 
     Some(OverlayHandle {
         snapshot_tx,
         action_rx,
         command_tx,
-        input_view,
     })
-}
-
-fn set_view(shared: &Mutex<InputView>, view: &InputView) {
-    if let Ok(mut v) = shared.lock()
-        && *v != *view
-    {
-        *v = view.clone();
-    }
 }
 
 fn run(
@@ -57,7 +42,6 @@ fn run(
     snapshot_rx: Receiver<OverlaySnapshot>,
     action_tx: Sender<OverlayAction>,
     command_rx: Receiver<OverlayCommand>,
-    shared_view: Arc<Mutex<InputView>>,
 ) {
     let lib = match OpenVrLibrary::load() {
         Ok(lib) => lib,
@@ -65,13 +49,6 @@ fn run(
             eprintln!(
                 "[SteamVR] 初期化失敗 (SteamVR未起動、またはopenvr_api.dllが見つからない): {}",
                 e
-            );
-            set_view(
-                &shared_view,
-                &InputView {
-                    status: InputStatus::Unavailable("SteamVR が動いていません".to_string()),
-                    actions: Vec::new(),
-                },
             );
             return;
         }
@@ -95,23 +72,9 @@ fn run(
 
     // SetActionManifestPath は最初の PollNextEvent より前に呼ぶ必要がある(openvr.h)ので、
     // オーバーレイのイベントを読み始める前にここで初期化する
-    let mut input = action_manifest.as_deref().and_then(|path| {
-        SteamVrInput::init(&lib, path).map(|mut i| {
-            i.status_file = path.parent().map(|d| d.join(STATUS_FILE_NAME));
-            i
-        })
-    });
-    let mut view = match &input {
-        Some(_) => InputView {
-            status: InputStatus::Ready,
-            actions: Vec::new(),
-        },
-        None => InputView {
-            status: InputStatus::Unavailable("SteamVR Input を初期化できませんでした".to_string()),
-            actions: Vec::new(),
-        },
-    };
-    set_view(&shared_view, &view);
+    let mut input = action_manifest
+        .as_deref()
+        .and_then(|path| SteamVrInput::init(&lib, path));
 
     let overlay_handle = match create_dashboard_overlay(&lib) {
         Ok(h) => h,
@@ -189,17 +152,13 @@ fn run(
             for action in input.poll(&lib) {
                 let _ = action_tx.send(OverlayAction::from_input(action));
             }
-            input.refresh_bindings_if_due(&lib);
-            view = input.view();
-            set_view(&shared_view, &view);
         }
-        latest.input = view.clone();
 
         // デスクトップの設定画面からの頼みごと
         while let Ok(cmd) = command_rx.try_recv() {
             match cmd {
-                OverlayCommand::OpenBindingUi { on_desktop } => match input.as_ref() {
-                    Some(i) => i.open_binding_ui(&lib, on_desktop),
+                OverlayCommand::OpenBindingUi => match input.as_ref() {
+                    Some(i) => i.open_binding_ui(&lib, true),
                     None => {
                         eprintln!("[SteamVR] SteamVR Input が使えないので割り当て画面を開けない")
                     }
@@ -481,20 +440,9 @@ struct SteamVrInput {
     action_set: ffi::VRActionSetHandle_t,
     actions: Vec<(InputAction, ffi::VRActionHandle_t)>,
     warned: bool,
-    /// actions と同じ並び: いま割り当てられているボタン / 最後に押された時刻
-    bindings: Vec<Vec<String>>,
-    fired_at: Vec<Option<Instant>>,
-    last_refresh: Option<Instant>,
-    /// 割り当てが変わったら書き出す(動作確認用。%APPDATA%\vrc-companion\steamvr_input\current_bindings.txt)
-    status_file: Option<std::path::PathBuf>,
 }
 
-const STATUS_FILE_NAME: &str = "current_bindings.txt";
 const SET_MANIFEST_ATTEMPTS: u32 = 5;
-/// 押されたあと「反応」を点けておく時間
-const FIRED_SHOW: Duration = Duration::from_millis(1500);
-/// 割り当てを SteamVR に問い合わせ直す間隔(バインド画面で変えたらすぐ反映されるように)
-const REFRESH_EVERY: Duration = Duration::from_millis(500);
 
 impl SteamVrInput {
     fn init(lib: &OpenVrLibrary, manifest_path: &std::path::Path) -> Option<Self> {
@@ -551,80 +499,11 @@ impl SteamVrInput {
             "[SteamVR] ボタン割り当て(SteamVR Input)を有効化: {}",
             manifest_path.display()
         );
-        let n = actions.len();
         Some(Self {
             action_set,
             actions,
             warned: false,
-            bindings: vec![Vec::new(); n],
-            fired_at: vec![None; n],
-            last_refresh: None,
-            status_file: None,
         })
-    }
-
-    fn view(&self) -> InputView {
-        InputView {
-            status: InputStatus::Ready,
-            actions: self
-                .actions
-                .iter()
-                .enumerate()
-                .map(|(i, (action, _))| ActionView {
-                    label: action.label_ja(),
-                    bindings: self.bindings[i].clone(),
-                    fired: self.fired_at[i].is_some_and(|t| t.elapsed() < FIRED_SHOW),
-                })
-                .collect(),
-        }
-    }
-
-    /// いま割り当てられているボタンを SteamVR に聞く(UpdateActionState のあとに呼ぶ)
-    fn refresh_bindings_if_due(&mut self, lib: &OpenVrLibrary) {
-        if self
-            .last_refresh
-            .is_some_and(|t| t.elapsed() < REFRESH_EVERY)
-        {
-            return;
-        }
-        self.last_refresh = Some(Instant::now());
-        let Some(input) = lib.input() else {
-            return;
-        };
-        let mut changed = false;
-        for (i, &(_, handle)) in self.actions.iter().enumerate() {
-            let names = query_bindings(input, self.action_set, handle);
-            if names != self.bindings[i] {
-                self.bindings[i] = names;
-                changed = true;
-            }
-        }
-        if changed {
-            self.write_status_file();
-        }
-    }
-
-    fn write_status_file(&self) {
-        let Some(path) = &self.status_file else {
-            return;
-        };
-        let mut text = String::new();
-        for (i, (action, _)) in self.actions.iter().enumerate() {
-            let b = if self.bindings[i].is_empty() {
-                "未割り当て".to_string()
-            } else {
-                self.bindings[i].join(" / ")
-            };
-            text.push_str(&format!("{}: {}\r\n", action.label_ja(), b));
-        }
-        if let Err(e) = std::fs::write(path, &text) {
-            eprintln!("[SteamVR] {} の書き込み失敗: {}", path.display(), e);
-        } else {
-            eprintln!(
-                "[SteamVR] ボタン割り当て: {}",
-                text.trim_end().replace("\r\n", " | ")
-            );
-        }
     }
 
     /// SteamVR のボタン割り当て画面をこのアプリのページで開く。
@@ -698,85 +577,10 @@ impl SteamVrInput {
             }
         }
         for a in &pressed {
-            if let Some(i) = self.actions.iter().position(|(x, _)| x == a) {
-                self.fired_at[i] = Some(Instant::now());
-            }
             eprintln!("[SteamVR] ボタン操作: {}", a.label_ja());
         }
         pressed
     }
-}
-
-/// 1つの操作に割り当てられているボタンの説明。GetActionBindingInfo(押し方まで分かる)を使い、
-/// 取れなければ GetActionOrigins + GetOriginLocalizedName(SteamVR の言語でのボタン名)
-fn query_bindings(
-    input: &ffi::VrIvInputFnTable,
-    action_set: ffi::VRActionSetHandle_t,
-    handle: ffi::VRActionHandle_t,
-) -> Vec<String> {
-    let mut infos: Vec<ffi::InputBindingInfo_t> = (0..ffi::MAX_ACTION_ORIGIN_COUNT)
-        .map(|_| unsafe { std::mem::zeroed() })
-        .collect();
-    let mut count: u32 = 0;
-    let err = unsafe {
-        (input.get_action_binding_info)(
-            handle,
-            infos.as_mut_ptr(),
-            std::mem::size_of::<ffi::InputBindingInfo_t>() as u32,
-            infos.len() as u32,
-            &mut count,
-        )
-    };
-    let mut names: Vec<String> = Vec::new();
-    if err == 0 {
-        for info in infos.iter().take(count as usize) {
-            let name = input_manifest::describe_binding(
-                &ffi::c_buf_to_string(&info.rch_device_path_name),
-                &ffi::c_buf_to_string(&info.rch_input_path_name),
-                &ffi::c_buf_to_string(&info.rch_slot_name),
-            );
-            if !names.contains(&name) {
-                names.push(name);
-            }
-        }
-    }
-    if !names.is_empty() {
-        return names;
-    }
-
-    let mut origins = [0 as ffi::VRInputValueHandle_t; ffi::MAX_ACTION_ORIGIN_COUNT];
-    let err = unsafe {
-        (input.get_action_origins)(
-            action_set,
-            handle,
-            origins.as_mut_ptr(),
-            origins.len() as u32,
-        )
-    };
-    if err != 0 {
-        return names;
-    }
-    for &origin in origins
-        .iter()
-        .filter(|&&o| o != ffi::INVALID_INPUT_VALUE_HANDLE)
-    {
-        let mut buf = [0u8; 256];
-        let err = unsafe {
-            (input.get_origin_localized_name)(
-                origin,
-                buf.as_mut_ptr() as *mut c_char,
-                buf.len() as u32,
-                ffi::INPUT_STRING_HAND_AND_SOURCE,
-            )
-        };
-        if err == 0 {
-            let name = ffi::c_buf_to_string(&buf);
-            if !name.is_empty() && !names.contains(&name) {
-                names.push(name);
-            }
-        }
-    }
-    names
 }
 
 fn create_dashboard_overlay(lib: &OpenVrLibrary) -> Result<VrOverlayHandle, String> {
