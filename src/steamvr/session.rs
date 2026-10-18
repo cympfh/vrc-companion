@@ -313,9 +313,13 @@ fn ensure_auto_launch_registered(lib: &OpenVrLibrary, action_manifest: Option<&s
     let key = CString::new(manifest::APP_KEY).unwrap();
 
     // 手で起動した(SteamVR の自動起動でない)場合、SteamVR はこのプロセスがどのアプリか
-    // 分からず、ボタン割り当てが別アプリ扱いになる。自分で名乗っておく(0 = 自分自身)。
+    // 分からず、ボタン割り当てが別アプリ扱いになる。自分で名乗っておく。
+    // ヘッダには「0 = 自分自身」とあるが、実機の vrserver ログでは 0 を渡すとアプリの PID が
+    // 0 にされたので、自分の PID を明示する。
     // SteamVR から起動された場合はすでに分かっているのでエラーが返ることがあるが、問題ない
-    let err = unsafe { (applications.identify_application)(0, key.as_ptr() as *mut c_char) };
+    let err = unsafe {
+        (applications.identify_application)(std::process::id(), key.as_ptr() as *mut c_char)
+    };
     if err != 0 {
         eprintln!(
             "[SteamVR] IdentifyApplication: EVRApplicationError={} (SteamVR から起動された場合は無視してよい)",
