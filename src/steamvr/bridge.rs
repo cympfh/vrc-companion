@@ -127,13 +127,14 @@ pub struct OverlayHandle {
 
 /// SteamVR オーバーレイ描画スレッドを起動する。SteamVR未起動・DLL不在などは
 /// 非致命的に扱い None を返す（呼び出し側は他機能に影響させない）。
+/// `width_m` はオーバーレイの表示幅(メートル、Config の `steamvr_overlay_width_m`)。
 #[cfg(windows)]
-pub fn start(initial: OverlaySnapshot) -> Option<OverlayHandle> {
-    super::session::start(initial)
+pub fn start(initial: OverlaySnapshot, width_m: f32) -> Option<OverlayHandle> {
+    super::session::start(initial, crate::config::clamp_overlay_width_m(width_m))
 }
 
 #[cfg(not(windows))]
-pub fn start(_initial: OverlaySnapshot) -> Option<OverlayHandle> {
+pub fn start(_initial: OverlaySnapshot, _width_m: f32) -> Option<OverlayHandle> {
     None
 }
 
@@ -178,7 +179,7 @@ mod tests {
     fn test_start_returns_none_or_some_without_panicking() {
         // 実機(SteamVR)無しでも呼べることだけを保証する。非Windowsでは常にNone。
         let snapshot = OverlaySnapshot::from_config(&Config::default(), false, "", "", "");
-        let _ = start(snapshot);
+        let _ = start(snapshot, 2.4);
     }
 
     fn all_false_snapshot() -> OverlaySnapshot {

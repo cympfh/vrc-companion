@@ -23,7 +23,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 
-use super::bridge::{OverlayAction, OverlaySnapshot, overlay_fields};
+use super::bridge::{OverlayAction, OverlaySnapshot};
+use super::overlay_ui;
 
 const WINDOW_CLASS_NAME: &str = "VrcCompanionOverlayGlWindow";
 
@@ -39,10 +40,13 @@ pub struct GlOverlayRenderer {
     texture: glow::Texture,
     width: u32,
     height: u32,
+    /// 論理ピクセル1つあたりのテクスチャのピクセル数(UI を高解像度で描くため)
+    pixels_per_point: f32,
 }
 
 impl GlOverlayRenderer {
-    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+    /// `width`×`height` はテクスチャの実ピクセル。UI は論理サイズ = 実ピクセル ÷ `pixels_per_point` で組む。
+    pub fn new(width: u32, height: u32, pixels_per_point: f32) -> Result<Self, String> {
         unsafe {
             let hwnd = create_hidden_window()?;
             let hdc = GetDC(hwnd);
@@ -76,6 +80,7 @@ impl GlOverlayRenderer {
                 Ok((painter, framebuffer, texture)) => {
                     let egui_ctx = egui::Context::default();
                     setup_fonts(&egui_ctx);
+                    overlay_ui::setup_style(&egui_ctx);
                     Ok(Self {
                         hwnd,
                         hdc,
@@ -87,6 +92,7 @@ impl GlOverlayRenderer {
                         texture,
                         width,
                         height,
+                        pixels_per_point,
                     })
                 }
                 Err(e) => {
@@ -172,61 +178,26 @@ impl GlOverlayRenderer {
                 .bind_framebuffer(glow::FRAMEBUFFER, Some(self.framebuffer));
         }
 
-        let raw_input = egui::RawInput {
+        let ppp = self.pixels_per_point;
+        let mut raw_input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(self.width as f32, self.height as f32),
+                egui::vec2(self.width as f32 / ppp, self.height as f32 / ppp),
             )),
             events,
             ..Default::default()
         };
+        raw_input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .native_pixels_per_point = Some(ppp);
 
         let mut clicked: Vec<OverlayAction> = Vec::new();
 
         let output = self.egui_ctx.run(raw_input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("VRC Companion");
-                ui.separator();
-
-                let start_stop_label = if snapshot.is_recording {
-                    "⏹ Stop"
-                } else {
-                    "⏺ Start"
-                };
-                if ui.button(start_stop_label).clicked() {
-                    clicked.push(OverlayAction::ToggleRecording);
-                }
-
-                for field in overlay_fields(snapshot) {
-                    let mut checked = field.enabled;
-                    let resp = if field.indent {
-                        ui.indent(field.label, |ui| ui.checkbox(&mut checked, field.label))
-                            .inner
-                    } else {
-                        ui.checkbox(&mut checked, field.label)
-                    };
-                    if resp.clicked() {
-                        clicked.push(field.action);
-                    }
-                }
-                if ui.button("📝 call QvPen").clicked() {
-                    clicked.push(OverlayAction::CallQvPen);
-                }
-
-                ui.separator();
-                ui.label("Transcribed:");
-                ui.label(&snapshot.last_transcription);
-
-                if snapshot.eliza_enabled && !snapshot.last_eliza_response.is_empty() {
-                    ui.label("Eliza:");
-                    ui.label(&snapshot.last_eliza_response);
-                } else if snapshot.auto_translate_enabled
-                    && !snapshot.last_translated_response.is_empty()
-                {
-                    ui.label("翻訳結果:");
-                    ui.label(&snapshot.last_translated_response);
-                }
-            });
+            let (actions, _) = overlay_ui::draw(ctx, snapshot);
+            clicked = actions;
         });
 
         let clipped_primitives = self
@@ -248,6 +219,31 @@ impl GlOverlayRenderer {
         }
 
         Ok((self.texture, clicked))
+    }
+}
+
+impl GlOverlayRenderer {
+    /// 直前に描いた画像を RGBA で読み出す(行は下から上の順)。`--dump-overlay` 用。
+    pub fn read_rgba(&mut self) -> Result<(u32, u32, Vec<u8>), String> {
+        let mut buf = vec![0u8; (self.width * self.height * 4) as usize];
+        unsafe {
+            if wglMakeCurrent(self.hdc, self.hglrc) == 0 {
+                return Err("wglMakeCurrent が失敗した".to_string());
+            }
+            self.gl
+                .bind_framebuffer(glow::FRAMEBUFFER, Some(self.framebuffer));
+            self.gl.read_pixels(
+                0,
+                0,
+                self.width as i32,
+                self.height as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(&mut buf),
+            );
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        }
+        Ok((self.width, self.height, buf))
     }
 }
 

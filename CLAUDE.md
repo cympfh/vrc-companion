@@ -81,7 +81,9 @@ The overlay renderer has its **own** `egui::Context` and must load `fonts/NotoSa
   - `bridge.rs` — all OS: `OverlaySnapshot` / `OverlayAction` / `OverlayHandle` / `start()` (non-Windows always `None`) / `overlay_fields()`
   - `ffi.rs` — `#[cfg(windows)]`: raw OpenVR C API tables
   - `session.rs` — `#[cfg(windows)]`: overlay lifecycle, event poll, texture submit, auto-launch register
-  - `render.rs` — `#[cfg(windows)]`: WGL + `egui_glow` offscreen painter
+  - `render.rs` — `#[cfg(windows)]`: WGL + `egui_glow` offscreen painter (texture = logical size × `PIXELS_PER_POINT`)
+  - `overlay_ui.rs` — all OS: the overlay's egui UI (cards, switches, buttons). Host-tested by clicking every hit target. Mouse scale = logical size; width in meters comes from `Config::steamvr_overlay_width_m` (default 2.4)
+  - `dump.rs` — `#[cfg(windows)]`: `vrc-companion.exe --dump-overlay <prefix>` renders sample snapshots to BMP through the real WGL path (no SteamVR needed)
   - `manifest.rs` — all OS: `.vrmanifest` JSON (host-testable)
 - `src/config.rs`, `src/main.rs` — stay at the root
 

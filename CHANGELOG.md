@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-18
+
+### Changed
+
+- SteamVR オーバーレイを約2倍の大きさに。表示幅を 2.4m に指定し（以前は指定なしで SteamVR 既定の 1m）、UI は 600×620 の論理サイズを 2 倍の解像度（1200×1240）で描くので文字がくっきり
+- オーバーレイの見た目を一新。暗い背景にカード、Start/Stop と QvPen の大きなボタン、チェックボックスの代わりにスイッチ、録音中の表示、指したとき・押したときの色の変化。長い文章は数行で「…」
+- 機能・ラベル・押したときの動作は今までどおり
+
+### Added
+
+- 設定 `steamvr_overlay_width_m`（オーバーレイの表示幅、既定 2.4、0.5〜6.0）
+- `vrc-companion.exe --dump-overlay <接頭辞>`: SteamVR なしでオーバーレイの見た目を BMP に書き出す（確認用）
+
 ## [0.3.0] - 2026-09-03
 
 ### Added

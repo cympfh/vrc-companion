@@ -11,17 +11,19 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use super::bridge::{OverlayAction, OverlayHandle, OverlaySnapshot};
 use super::ffi::{self, OpenVrLibrary, Texture_t, VrOverlayHandle};
 use super::manifest;
+use super::overlay_ui::{LOGICAL_H, LOGICAL_W, PIXELS_PER_POINT};
 use super::render::GlOverlayRenderer;
 
 const OVERLAY_NAME: &str = "VRC Companion";
-const OVERLAY_WIDTH: u32 = 400;
-const OVERLAY_HEIGHT: u32 = 380;
+/// テクスチャの実ピクセル(論理サイズ × PIXELS_PER_POINT。以前は 400×380 を等倍で描いていた)
+pub(super) const OVERLAY_WIDTH: u32 = (LOGICAL_W * PIXELS_PER_POINT) as u32;
+pub(super) const OVERLAY_HEIGHT: u32 = (LOGICAL_H * PIXELS_PER_POINT) as u32;
 
-pub fn start(initial: OverlaySnapshot) -> Option<OverlayHandle> {
+pub fn start(initial: OverlaySnapshot, width_m: f32) -> Option<OverlayHandle> {
     let (snapshot_tx, snapshot_rx) = mpsc::channel::<OverlaySnapshot>();
     let (action_tx, action_rx) = mpsc::channel::<OverlayAction>();
 
-    std::thread::spawn(move || run(initial, snapshot_rx, action_tx));
+    std::thread::spawn(move || run(initial, width_m, snapshot_rx, action_tx));
 
     Some(OverlayHandle {
         snapshot_tx,
@@ -31,6 +33,7 @@ pub fn start(initial: OverlaySnapshot) -> Option<OverlayHandle> {
 
 fn run(
     initial: OverlaySnapshot,
+    width_m: f32,
     snapshot_rx: Receiver<OverlaySnapshot>,
     action_tx: Sender<OverlayAction>,
 ) {
@@ -65,16 +68,17 @@ fn run(
     if let Err(e) = set_overlay_input_method(&lib, overlay_handle) {
         eprintln!("[SteamVR] SetOverlayInputMethod 失敗: {}", e);
     }
-    if let Err(e) = set_overlay_mouse_scale(
-        &lib,
-        overlay_handle,
-        OVERLAY_WIDTH as f32,
-        OVERLAY_HEIGHT as f32,
-    ) {
+    // マウス座標は UI の論理ピクセルで受け取る(テクスチャは PIXELS_PER_POINT 倍の解像度)
+    if let Err(e) = set_overlay_mouse_scale(&lib, overlay_handle, LOGICAL_W, LOGICAL_H) {
         eprintln!("[SteamVR] SetOverlayMouseScale 失敗: {}", e);
     }
+    // 表示の大きさ(幅)。呼ばないと SteamVR の既定の 1m になり、小さくて読みにくかった
+    if let Err(e) = set_overlay_width_in_meters(&lib, overlay_handle, width_m) {
+        eprintln!("[SteamVR] SetOverlayWidthInMeters 失敗: {}", e);
+    }
 
-    let mut renderer = match GlOverlayRenderer::new(OVERLAY_WIDTH, OVERLAY_HEIGHT) {
+    let mut renderer = match GlOverlayRenderer::new(OVERLAY_WIDTH, OVERLAY_HEIGHT, PIXELS_PER_POINT)
+    {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[SteamVR] GlOverlayRenderer 初期化失敗: {}", e);
@@ -266,6 +270,18 @@ fn set_overlay_mouse_scale(
 ) -> Result<(), String> {
     let mut scale = ffi::HmdVector2_t { v: [width, height] };
     let err = unsafe { (lib.overlay().set_overlay_mouse_scale)(handle, &mut scale) };
+    if err != 0 {
+        return Err(format!("EVROverlayError={}", err));
+    }
+    Ok(())
+}
+
+fn set_overlay_width_in_meters(
+    lib: &OpenVrLibrary,
+    handle: VrOverlayHandle,
+    width_m: f32,
+) -> Result<(), String> {
+    let err = unsafe { (lib.overlay().set_overlay_width_in_meters)(handle, width_m) };
     if err != 0 {
         return Err(format!("EVROverlayError={}", err));
     }

@@ -103,7 +103,7 @@ pub struct VrIvOverlayFnTable {
     pub get_overlay_texel_aspect: PlaceholderFn,
     pub set_overlay_sort_order: PlaceholderFn,
     pub get_overlay_sort_order: PlaceholderFn,
-    pub set_overlay_width_in_meters: PlaceholderFn,
+    pub set_overlay_width_in_meters: unsafe extern "C" fn(VrOverlayHandle, f32) -> EVROverlayError,
     pub get_overlay_width_in_meters: PlaceholderFn,
     pub set_overlay_curvature: PlaceholderFn,
     pub get_overlay_curvature: PlaceholderFn,

@@ -32,6 +32,9 @@ pub struct Config {
     pub translate_lang_preset: String,
     #[serde(default = "default_translate_lang_custom")]
     pub translate_lang_custom: String,
+    /// SteamVR オーバーレイの表示幅(メートル)。起動時に読む
+    #[serde(default = "default_steamvr_overlay_width_m")]
+    pub steamvr_overlay_width_m: f32,
 }
 
 fn default_silence_duration_secs() -> f32 {
@@ -82,6 +85,22 @@ fn default_translate_lang_custom() -> String {
     String::new()
 }
 
+/// 以前は指定なし(SteamVR の既定 1m、UI は 400px 幅に 14px の文字)。
+/// 2.4m で UI は 600px 幅・16〜17px の文字なので、文字は約2倍の大きさに見える
+fn default_steamvr_overlay_width_m() -> f32 {
+    2.4
+}
+
+/// おかしな値(0、負、巨大)で SteamVR に渡さないように丸める
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn clamp_overlay_width_m(w: f32) -> f32 {
+    if w.is_finite() {
+        w.clamp(0.5, 6.0)
+    } else {
+        default_steamvr_overlay_width_m()
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -99,6 +118,7 @@ impl Default for Config {
             auto_translate_enabled: default_auto_translate_enabled(),
             translate_lang_preset: default_translate_lang_preset(),
             translate_lang_custom: default_translate_lang_custom(),
+            steamvr_overlay_width_m: default_steamvr_overlay_width_m(),
         }
     }
 }
@@ -208,6 +228,16 @@ mod tests {
         assert_eq!(config.eliza_url, "http://localhost:9096");
         assert!(config.clipboard_enabled);
         assert!(!config.eliza_response_to_vrchat_enabled);
+    }
+
+    #[test]
+    fn test_steamvr_overlay_width_default_and_clamp() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.steamvr_overlay_width_m, 2.4);
+        assert_eq!(clamp_overlay_width_m(2.0), 2.0);
+        assert_eq!(clamp_overlay_width_m(0.0), 0.5);
+        assert_eq!(clamp_overlay_width_m(100.0), 6.0);
+        assert_eq!(clamp_overlay_width_m(f32::NAN), 2.4);
     }
 
     #[test]

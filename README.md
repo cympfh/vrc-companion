@@ -42,6 +42,12 @@ VRChat で遊んでるときにあると便利なあれこれ
    - 「Send to Eliza」は上記とは独立して有効化できます
 3. 「📝 call QvPen」ボタンで QvPen を呼び出せます
 
+## VR の中の表示（SteamVR オーバーレイ）
+
+SteamVR のダッシュボードに「VRC Companion」のタブが出て、録音の開始・停止、送り先の切り替え、QvPen の呼び出しができます。
+
+表示の大きさは設定ファイル（上の `config.json`）の `steamvr_overlay_width_m` で変えられます（幅をメートルで。既定は `2.4`）。変えたらアプリを起動しなおしてください。
+
 ## ビルド・実行
 
 VRChat は Windows で動くため、本ツールも Windows ネイティブ実行ファイルとしてビルドします。

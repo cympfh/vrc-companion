@@ -15,6 +15,19 @@ use steamvr::{OverlayAction, OverlayHandle, OverlaySnapshot};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 fn main() -> eframe::Result<()> {
+    // 見た目の確認用: SteamVR なしでオーバーレイを BMP に書き出して終わる
+    #[cfg(windows)]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(i) = args.iter().position(|a| a == "--dump-overlay") {
+            let prefix = args.get(i + 1).map(String::as_str).unwrap_or("overlay");
+            if let Err(e) = steamvr::dump_overlay(prefix) {
+                eprintln!("--dump-overlay 失敗: {}", e);
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+    }
     let config = Config::load();
 
     let options = eframe::NativeOptions {
@@ -94,8 +107,10 @@ impl App {
         let (mute_trigger_sender, mute_trigger_receiver) = channel::<()>();
         vrchat::start_mute_listener(mute_trigger_sender);
 
-        let steamvr_overlay =
-            steamvr::start(OverlaySnapshot::from_config(&config, false, "", "", ""));
+        let steamvr_overlay = steamvr::start(
+            OverlaySnapshot::from_config(&config, false, "", "", ""),
+            config.steamvr_overlay_width_m,
+        );
 
         Self {
             settings_xai_api_key: config.xai_api_key.clone(),
