@@ -280,7 +280,7 @@ impl App {
     /// 排他制御は既存の `enable_*_exclusive` を再利用する（Configの単一ソースを保つ）。
     /// 設定画面の「SteamVR ボタン割り当て」。いま割り当てられているボタンと、押されたときの反応を出す
     fn steamvr_bindings_section(&self, ui: &mut egui::Ui) {
-        use steamvr::{InputStatus, OverlayCommand};
+        use steamvr::{BindingButton, OverlayCommand};
         ui.label(egui::RichText::new("SteamVR ボタン割り当て").strong());
         let Some(overlay) = self.steamvr_overlay.as_ref() else {
             ui.label("SteamVR が動いていないので使えません");
@@ -291,53 +291,20 @@ impl App {
             .lock()
             .map(|v| v.clone())
             .unwrap_or_default();
-        match &view.status {
-            InputStatus::Starting => {
-                ui.label("SteamVR に接続中…");
-            }
-            InputStatus::Unavailable(why) => {
-                ui.label(format!("使えません: {}", why));
-            }
-            InputStatus::Ready => {
-                egui::Grid::new("steamvr_bindings")
-                    .num_columns(3)
-                    .spacing([16.0, 6.0])
-                    .show(ui, |ui| {
-                        for a in &view.actions {
-                            ui.label(a.label);
-                            if a.bindings.is_empty() {
-                                ui.weak("未割り当て");
-                            } else {
-                                ui.label(a.bindings.join(" / "));
-                            }
-                            if a.fired {
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(0x3d, 0xd6, 0x8c),
-                                    "● 反応",
-                                );
-                            } else {
-                                ui.label("");
-                            }
-                            ui.end_row();
-                        }
-                    });
-            }
-        }
-        ui.horizontal(|ui| {
-            if ui.button("割り当てを変える（PC の画面）").clicked() {
+        match steamvr::bindings_section(ui, &view) {
+            Some(BindingButton::OnDesktop) => {
                 let _ = overlay
                     .command_tx
                     .send(OverlayCommand::OpenBindingUi { on_desktop: true });
             }
-            if ui.button("VR の中で開く").clicked() {
+            Some(BindingButton::InVr) => {
                 let _ = overlay
                     .command_tx
                     .send(OverlayCommand::OpenBindingUi { on_desktop: false });
             }
-            if ui.button("ブラウザで開く").clicked() {
-                open_binding_page_in_browser();
-            }
-        });
+            Some(BindingButton::Browser) => open_binding_page_in_browser(),
+            None => {}
+        }
     }
 
     fn apply_steamvr_action(&mut self, action: OverlayAction) {

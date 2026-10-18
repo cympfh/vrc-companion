@@ -19,7 +19,7 @@ pub const LOGICAL_H: f32 = 790.0;
 /// テクスチャの解像度 = 論理サイズ × これ
 pub const PIXELS_PER_POINT: f32 = 2.0;
 
-mod color {
+pub(super) mod color {
     use egui::Color32;
     pub const BG: Color32 = Color32::from_rgb(0x12, 0x14, 0x19);
     pub const CARD: Color32 = Color32::from_rgb(0x1b, 0x1e, 0x26);

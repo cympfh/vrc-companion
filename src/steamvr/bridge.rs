@@ -49,7 +49,7 @@ pub struct ActionView {
 }
 
 /// App → オーバーレイのスレッドへの頼みごと(SteamVR を呼べるのはそのスレッドだけ)
-#[allow(dead_code)]
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayCommand {
     /// SteamVR のボタン割り当て画面を開く。true = PC の画面、false = VR の中
@@ -165,7 +165,7 @@ pub enum OverlayAction {
 
 impl OverlayAction {
     /// SteamVR のボタン割り当て(input_manifest.rs)→ アプリの操作
-    #[allow(dead_code)]
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn from_input(action: super::input_manifest::InputAction) -> Self {
         use super::input_manifest::InputAction;
         match action {
@@ -179,7 +179,6 @@ impl OverlayAction {
 pub struct OverlayHandle {
     pub snapshot_tx: Sender<OverlaySnapshot>,
     pub action_rx: Receiver<OverlayAction>,
-    #[allow(dead_code)]
     pub command_tx: Sender<OverlayCommand>,
     /// ボタン割り当ての様子(設定画面に出す)。オーバーレイのスレッドが更新する
     pub input_view: Arc<Mutex<InputView>>,

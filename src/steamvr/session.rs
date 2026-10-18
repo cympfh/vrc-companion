@@ -19,6 +19,7 @@ use super::input_manifest::{self, InputAction};
 use super::manifest;
 use super::overlay_ui::{LOGICAL_H, LOGICAL_W, PIXELS_PER_POINT};
 use super::render::GlOverlayRenderer;
+use super::toast_ui::{self, ToastKind};
 
 const OVERLAY_NAME: &str = "VRC Companion";
 /// テクスチャの実ピクセル(論理サイズ × PIXELS_PER_POINT。以前は 400×380 を等倍で描いていた)
@@ -148,7 +149,17 @@ fn run(
         }
     };
 
+    // 録音の開始/終了のトースト(頭に固定した別オーバーレイ)。作れなくても本体は動かす
+    let mut toast = match Toast::create(&lib) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            eprintln!("[SteamVR] トースト用オーバーレイを作れなかった: {}", e);
+            None
+        }
+    };
+
     let mut latest = initial;
+    let mut was_recording = latest.is_recording;
     loop {
         // WaitFrameSync でコンポジタの次フレームに同期する(固定インターバルの
         // recv_timeoutによるポーリングではなく、コンポジタ側のペースに揃える)。
@@ -164,6 +175,14 @@ fn run(
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => break,
         }
+
+        if let Some(t) = toast.as_mut() {
+            if let Some(kind) = ToastKind::from_transition(was_recording, latest.is_recording) {
+                t.show(&lib, kind);
+            }
+            t.tick(&lib);
+        }
+        was_recording = latest.is_recording;
 
         // SteamVR のバインドで割り当てられたボタン操作(VRChat を操作中でも届く)
         if let Some(input) = input.as_mut() {
@@ -334,6 +353,121 @@ fn ensure_auto_launch_registered(lib: &OpenVrLibrary, action_manifest: Option<&s
             "[SteamVR] SetApplicationAutoLaunch 失敗: EVRApplicationError={}",
             err
         );
+    }
+}
+
+/// 録音の開始/終了を知らせるトースト。ダッシュボードとは別の普通のオーバーレイで、
+/// ヘッドセットに固定(目の前の少し下)なので、ダッシュボードを閉じていても見える。
+struct Toast {
+    handle: VrOverlayHandle,
+    renderer: GlOverlayRenderer,
+    shown_at: Option<Instant>,
+}
+
+impl Toast {
+    fn create(lib: &OpenVrLibrary) -> Result<Self, String> {
+        let key = CString::new(format!("{}.toast", manifest::APP_KEY)).unwrap();
+        let name = CString::new("VRC Companion 通知").unwrap();
+        let mut handle: VrOverlayHandle = 0;
+        let ov = lib.overlay();
+        let err = unsafe {
+            (ov.create_overlay)(
+                key.as_ptr() as *mut c_char,
+                name.as_ptr() as *mut c_char,
+                &mut handle,
+            )
+        };
+        if err != 0 {
+            return Err(format!("CreateOverlay: EVROverlayError={}", err));
+        }
+        let [x, y, z] = toast_ui::TOAST_OFFSET_M;
+        let mut transform = ffi::HmdMatrix34_t {
+            m: [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, y], [0.0, 0.0, 1.0, z]],
+        };
+        unsafe {
+            let e = (ov.set_overlay_width_in_meters)(handle, toast_ui::TOAST_WIDTH_M);
+            if e != 0 {
+                eprintln!(
+                    "[SteamVR] トースト SetOverlayWidthInMeters: EVROverlayError={}",
+                    e
+                );
+            }
+            let e = (ov.set_overlay_transform_tracked_device_relative)(
+                handle,
+                ffi::TRACKED_DEVICE_INDEX_HMD,
+                &mut transform,
+            );
+            if e != 0 {
+                eprintln!(
+                    "[SteamVR] トースト SetOverlayTransformTrackedDeviceRelative: EVROverlayError={}",
+                    e
+                );
+            }
+            // 他のオーバーレイより手前に
+            let _ = (ov.set_overlay_sort_order)(handle, 100);
+            let _ = (ov.hide_overlay)(handle);
+        }
+        let renderer = GlOverlayRenderer::new(
+            (toast_ui::TOAST_W * PIXELS_PER_POINT) as u32,
+            (toast_ui::TOAST_H * PIXELS_PER_POINT) as u32,
+            PIXELS_PER_POINT,
+        )?;
+        Ok(Self {
+            handle,
+            renderer,
+            shown_at: None,
+        })
+    }
+
+    fn show(&mut self, lib: &OpenVrLibrary, kind: ToastKind) {
+        // テクスチャを渡すのは描いた直後(このレンダラの GL コンテキストが有効な間)
+        let texture = match self
+            .renderer
+            .render_ui(Vec::new(), |ctx| toast_ui::draw(ctx, kind))
+        {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("[SteamVR] トーストの描画に失敗: {}", e);
+                return;
+            }
+        };
+        let mut tex = Texture_t {
+            handle: texture.0.get() as usize as *mut c_void,
+            e_type: ffi::TEXTURE_TYPE_OPENGL,
+            e_color_space: ffi::COLOR_SPACE_AUTO,
+        };
+        if let Err(e) = set_overlay_texture(lib, self.handle, &mut tex) {
+            eprintln!("[SteamVR] トースト SetOverlayTexture 失敗: {}", e);
+            return;
+        }
+        unsafe {
+            let _ = (lib.overlay().set_overlay_alpha)(self.handle, 0.0);
+        }
+        if let Err(e) = show_overlay(lib, self.handle) {
+            eprintln!("[SteamVR] トースト ShowOverlay 失敗: {}", e);
+            return;
+        }
+        self.shown_at = Some(Instant::now());
+        eprintln!("[SteamVR] トースト: {:?}", kind);
+    }
+
+    /// 毎フレーム呼ぶ。透明度を時間に合わせて変え、時間が来たら隠す
+    fn tick(&mut self, lib: &OpenVrLibrary) {
+        let Some(at) = self.shown_at else {
+            return;
+        };
+        let ov = lib.overlay();
+        match toast_ui::alpha_at(at.elapsed()) {
+            Some(a) => unsafe {
+                let _ = (ov.set_overlay_alpha)(self.handle, a);
+            },
+            None => {
+                unsafe {
+                    let _ = (ov.hide_overlay)(self.handle);
+                }
+                self.shown_at = None;
+            }
+        }
     }
 }
 

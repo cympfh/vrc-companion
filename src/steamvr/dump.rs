@@ -6,6 +6,8 @@ use super::bridge::{ActionView, InputStatus, InputView, OverlaySnapshot};
 use super::overlay_ui::PIXELS_PER_POINT;
 use super::render::GlOverlayRenderer;
 use super::session::{OVERLAY_HEIGHT, OVERLAY_WIDTH};
+use super::settings_ui;
+use super::toast_ui::{self, ToastKind};
 
 fn samples() -> Vec<(&'static str, OverlaySnapshot)> {
     let base = OverlaySnapshot {
@@ -68,6 +70,45 @@ pub fn dump_overlay(prefix: &str) -> Result<(), String> {
         write_bmp(&path, w, h, &rgba).map_err(|e| format!("{}: {}", path, e))?;
         println!("{}", path);
     }
+
+    // 録音の開始/終了トースト(背景は透明)
+    let mut toast = GlOverlayRenderer::new(
+        (toast_ui::TOAST_W * PIXELS_PER_POINT) as u32,
+        (toast_ui::TOAST_H * PIXELS_PER_POINT) as u32,
+        PIXELS_PER_POINT,
+    )?;
+    for (name, kind) in [
+        ("toast-start", ToastKind::RecordingStarted),
+        ("toast-stop", ToastKind::RecordingStopped),
+    ] {
+        for _ in 0..3 {
+            toast.render_ui(Vec::new(), |ctx| toast_ui::draw(ctx, kind))?;
+        }
+        write_current(&mut toast, prefix, name)?;
+    }
+
+    // デスクトップの設定画面の「SteamVR ボタン割り当て」欄(egui 標準の暗い見た目で)
+    let view = samples().remove(0).1.input;
+    let mut settings = GlOverlayRenderer::new(1160, 300, PIXELS_PER_POINT)?;
+    for _ in 0..3 {
+        settings.render_ui(Vec::new(), |ctx| {
+            ctx.set_visuals(egui::Visuals::dark());
+            ctx.style_mut(|s| s.text_styles = egui::Style::default().text_styles);
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.label(egui::RichText::new("SteamVR ボタン割り当て").strong());
+                settings_ui::bindings_section(ui, &view);
+            });
+        })?;
+    }
+    write_current(&mut settings, prefix, "settings")?;
+    Ok(())
+}
+
+fn write_current(renderer: &mut GlOverlayRenderer, prefix: &str, name: &str) -> Result<(), String> {
+    let (w, h, rgba) = renderer.read_rgba()?;
+    let path = format!("{}-{}.bmp", prefix, name);
+    write_bmp(&path, w, h, &rgba).map_err(|e| format!("{}: {}", path, e))?;
+    println!("{}", path);
     Ok(())
 }
 

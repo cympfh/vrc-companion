@@ -170,6 +170,20 @@ impl GlOverlayRenderer {
         snapshot: &OverlaySnapshot,
         events: Vec<egui::Event>,
     ) -> Result<(glow::NativeTexture, Vec<OverlayAction>), String> {
+        let mut clicked: Vec<OverlayAction> = Vec::new();
+        let texture = self.render_ui(events, |ctx| {
+            let (actions, _) = overlay_ui::draw(ctx, snapshot);
+            clicked = actions;
+        })?;
+        Ok((texture, clicked))
+    }
+
+    /// 任意の egui UI(`ui`)を描いてテクスチャを返す。トーストや `--dump-overlay` でも使う
+    pub fn render_ui(
+        &mut self,
+        events: Vec<egui::Event>,
+        ui: impl FnMut(&egui::Context),
+    ) -> Result<glow::NativeTexture, String> {
         unsafe {
             if wglMakeCurrent(self.hdc, self.hglrc) == 0 {
                 return Err("wglMakeCurrent が失敗した".to_string());
@@ -193,12 +207,7 @@ impl GlOverlayRenderer {
             .or_default()
             .native_pixels_per_point = Some(ppp);
 
-        let mut clicked: Vec<OverlayAction> = Vec::new();
-
-        let output = self.egui_ctx.run(raw_input, |ctx| {
-            let (actions, _) = overlay_ui::draw(ctx, snapshot);
-            clicked = actions;
-        });
+        let output = self.egui_ctx.run(raw_input, ui);
 
         let clipped_primitives = self
             .egui_ctx
@@ -218,7 +227,7 @@ impl GlOverlayRenderer {
             self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         }
 
-        Ok((self.texture, clicked))
+        Ok(self.texture)
     }
 }
 

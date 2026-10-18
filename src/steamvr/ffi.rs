@@ -98,6 +98,15 @@ pub const EVENT_MOUSE_BUTTON_UP: u32 = 302;
 pub type EVROverlayInputMethod = i32;
 pub const INPUT_METHOD_MOUSE: EVROverlayInputMethod = 1;
 
+/// `HmdMatrix34_t`(3行4列、行優先。最後の列が平行移動)
+#[repr(C)]
+pub struct HmdMatrix34_t {
+    pub m: [[f32; 4]; 3],
+}
+
+/// ヘッドセット(デバイス番号 0)
+pub const TRACKED_DEVICE_INDEX_HMD: u32 = 0;
+
 #[repr(C)]
 pub struct HmdVector2_t {
     pub v: [f32; 2],
@@ -137,7 +146,8 @@ type PlaceholderFn = Option<unsafe extern "C" fn()>;
 #[repr(C)]
 pub struct VrIvOverlayFnTable {
     pub find_overlay: PlaceholderFn,
-    pub create_overlay: PlaceholderFn,
+    pub create_overlay:
+        unsafe extern "C" fn(*mut c_char, *mut c_char, *mut VrOverlayHandle) -> EVROverlayError,
     pub create_subview_overlay: PlaceholderFn,
     pub destroy_overlay: unsafe extern "C" fn(VrOverlayHandle) -> EVROverlayError,
     pub get_overlay_key: PlaceholderFn,
@@ -152,11 +162,11 @@ pub struct VrIvOverlayFnTable {
     pub get_overlay_flags: PlaceholderFn,
     pub set_overlay_color: PlaceholderFn,
     pub get_overlay_color: PlaceholderFn,
-    pub set_overlay_alpha: PlaceholderFn,
+    pub set_overlay_alpha: unsafe extern "C" fn(VrOverlayHandle, f32) -> EVROverlayError,
     pub get_overlay_alpha: PlaceholderFn,
     pub set_overlay_texel_aspect: PlaceholderFn,
     pub get_overlay_texel_aspect: PlaceholderFn,
-    pub set_overlay_sort_order: PlaceholderFn,
+    pub set_overlay_sort_order: unsafe extern "C" fn(VrOverlayHandle, u32) -> EVROverlayError,
     pub get_overlay_sort_order: PlaceholderFn,
     pub set_overlay_width_in_meters: unsafe extern "C" fn(VrOverlayHandle, f32) -> EVROverlayError,
     pub get_overlay_width_in_meters: PlaceholderFn,
@@ -171,7 +181,8 @@ pub struct VrIvOverlayFnTable {
     pub get_overlay_transform_type: PlaceholderFn,
     pub set_overlay_transform_absolute: PlaceholderFn,
     pub get_overlay_transform_absolute: PlaceholderFn,
-    pub set_overlay_transform_tracked_device_relative: PlaceholderFn,
+    pub set_overlay_transform_tracked_device_relative:
+        unsafe extern "C" fn(VrOverlayHandle, u32, *mut HmdMatrix34_t) -> EVROverlayError,
     pub get_overlay_transform_tracked_device_relative: PlaceholderFn,
     pub set_overlay_transform_tracked_device_component: PlaceholderFn,
     pub get_overlay_transform_tracked_device_component: PlaceholderFn,
@@ -180,7 +191,7 @@ pub struct VrIvOverlayFnTable {
     pub set_overlay_transform_projection: PlaceholderFn,
     pub set_subview_position: PlaceholderFn,
     pub show_overlay: unsafe extern "C" fn(VrOverlayHandle) -> EVROverlayError,
-    pub hide_overlay: PlaceholderFn,
+    pub hide_overlay: unsafe extern "C" fn(VrOverlayHandle) -> EVROverlayError,
     pub is_overlay_visible: unsafe extern "C" fn(VrOverlayHandle) -> bool,
     pub get_transform_for_overlay_coordinates: PlaceholderFn,
     pub wait_frame_sync: unsafe extern "C" fn(u32) -> EVROverlayError,
@@ -484,6 +495,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<InputDigitalActionData_t>(), 24);
         // InputBindingInfo_t: 128×4 + 32 = 544
         assert_eq!(std::mem::size_of::<InputBindingInfo_t>(), 544);
+        assert_eq!(std::mem::size_of::<HmdMatrix34_t>(), 48);
     }
 
     #[test]
