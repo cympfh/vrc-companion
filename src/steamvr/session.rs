@@ -355,6 +355,7 @@ struct SteamVrInput {
 }
 
 const STATUS_FILE_NAME: &str = "current_bindings.txt";
+const SET_MANIFEST_ATTEMPTS: u32 = 5;
 /// 押されたあと「反応」を点けておく時間
 const FIRED_SHOW: Duration = Duration::from_millis(1500);
 /// 割り当てを SteamVR に問い合わせ直す間隔(バインド画面で変えたらすぐ反映されるように)
@@ -364,12 +365,24 @@ impl SteamVrInput {
     fn init(lib: &OpenVrLibrary, manifest_path: &std::path::Path) -> Option<Self> {
         let input = lib.input()?;
         let path_c = CString::new(manifest_path.to_string_lossy().into_owned()).ok()?;
-        let err = unsafe { (input.set_action_manifest_path)(path_c.as_ptr() as *mut c_char) };
-        if err != 0 {
+        // SteamVR がバインドの保存中などで忙しいと IPC エラー(7)で返ることがある(実機で確認)。
+        // 少し待って何度かやり直す
+        let mut err = 0;
+        for attempt in 1..=SET_MANIFEST_ATTEMPTS {
+            err = unsafe { (input.set_action_manifest_path)(path_c.as_ptr() as *mut c_char) };
+            if err == 0 {
+                break;
+            }
             eprintln!(
-                "[SteamVR] SetActionManifestPath 失敗: EVRInputError={}",
-                err
+                "[SteamVR] SetActionManifestPath 失敗 ({}/{}): EVRInputError={}",
+                attempt, SET_MANIFEST_ATTEMPTS, err
             );
+            if err != ffi::INPUT_ERROR_IPC || attempt == SET_MANIFEST_ATTEMPTS {
+                return None;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        if err != 0 {
             return None;
         }
 

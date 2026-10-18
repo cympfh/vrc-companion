@@ -27,6 +27,7 @@ pub type EVRInitError = i32;
 pub type EVROverlayError = i32;
 pub type EVRApplicationError = i32;
 pub type EVRInputError = i32;
+pub const INPUT_ERROR_IPC: EVRInputError = 7;
 #[allow(non_camel_case_types)]
 pub type VRActionHandle_t = u64;
 #[allow(non_camel_case_types)]
