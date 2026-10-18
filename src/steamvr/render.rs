@@ -10,7 +10,7 @@ use std::ffi::{CString, c_void};
 use std::sync::Arc;
 
 use glow::HasContext;
-use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, GetLastError, HWND};
 use windows_sys::Win32::Graphics::Gdi::{GetDC, HDC, ReleaseDC};
 use windows_sys::Win32::Graphics::OpenGL::{
     ChoosePixelFormat, HGLRC, PFD_DOUBLEBUFFER, PFD_DRAW_TO_WINDOW, PFD_SUPPORT_OPENGL,
@@ -313,7 +313,8 @@ unsafe fn create_hidden_window() -> Result<HWND, String> {
             lpszClassName: class_name.as_ptr(),
         };
 
-        if RegisterClassW(&wnd_class) == 0 {
+        // レンダラは複数作る(本体とトースト)ので、2つ目以降は登録済みでよい
+        if RegisterClassW(&wnd_class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS {
             return Err("RegisterClassW が失敗した".to_string());
         }
 

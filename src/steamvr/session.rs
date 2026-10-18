@@ -366,6 +366,12 @@ struct Toast {
 
 impl Toast {
     fn create(lib: &OpenVrLibrary) -> Result<Self, String> {
+        // 先に描画の準備(失敗したらオーバーレイは作らない)
+        let renderer = GlOverlayRenderer::new(
+            (toast_ui::TOAST_W * PIXELS_PER_POINT) as u32,
+            (toast_ui::TOAST_H * PIXELS_PER_POINT) as u32,
+            PIXELS_PER_POINT,
+        )?;
         let key = CString::new(format!("{}.toast", manifest::APP_KEY)).unwrap();
         let name = CString::new("VRC Companion 通知").unwrap();
         let mut handle: VrOverlayHandle = 0;
@@ -407,11 +413,6 @@ impl Toast {
             let _ = (ov.set_overlay_sort_order)(handle, 100);
             let _ = (ov.hide_overlay)(handle);
         }
-        let renderer = GlOverlayRenderer::new(
-            (toast_ui::TOAST_W * PIXELS_PER_POINT) as u32,
-            (toast_ui::TOAST_H * PIXELS_PER_POINT) as u32,
-            PIXELS_PER_POINT,
-        )?;
         Ok(Self {
             handle,
             renderer,
