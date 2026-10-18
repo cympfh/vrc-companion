@@ -1,7 +1,8 @@
 //! SteamVR オーバーレイの中身(egui)。描画先(WGL / テスト)に依存しないので全OSでテストできる。
 //!
 //! 見た目: 暗い背景にカードを並べる。上から、見出しと録音中の表示 → Start/Stop と QvPen の大きなボタン →
-//! 送り先・Eliza の2枚のカード(各行は右端にスイッチ) → 認識結果のカード。
+//! 送り先・Eliza の2枚のカード(各行は右端にスイッチ) → 「キー割り当て変更」ボタン →
+//! 認識結果のカード。
 //! 座標はすべて論理ピクセル(`LOGICAL_W` × `LOGICAL_H`)。実際のテクスチャは
 //! `PIXELS_PER_POINT` 倍の解像度で描くので、大きく表示しても文字がぼやけない。
 
@@ -12,11 +13,11 @@ use super::bridge::{OverlayAction, OverlayField, OverlaySnapshot, overlay_fields
 
 /// UI の論理サイズ(マウス座標もこの単位)
 pub const LOGICAL_W: f32 = 600.0;
-pub const LOGICAL_H: f32 = 620.0;
+pub const LOGICAL_H: f32 = 686.0;
 /// テクスチャの解像度 = 論理サイズ × これ
 pub const PIXELS_PER_POINT: f32 = 2.0;
 
-mod color {
+pub(super) mod color {
     use egui::Color32;
     pub const BG: Color32 = Color32::from_rgb(0x12, 0x14, 0x19);
     pub const CARD: Color32 = Color32::from_rgb(0x1b, 0x1e, 0x26);
@@ -129,6 +130,24 @@ pub fn draw(
                 &mut targets,
             );
             y += h1.max(h2) + GAP;
+
+            // SteamVR のキー割り当て画面を VR の中に開く
+            let bind_rect = Rect::from_min_size(pos2(left, y), vec2(width, 52.0));
+            if big_button(
+                ui,
+                "open_binding_ui",
+                bind_rect,
+                "キー割り当て変更",
+                color::SECONDARY,
+                color::TEXT,
+            ) {
+                clicked.push(OverlayAction::OpenBindingUi);
+            }
+            targets.push(HitTarget {
+                action: OverlayAction::OpenBindingUi,
+                rect: bind_rect,
+            });
+            y += 52.0 + GAP;
 
             // 認識結果
             let text_rect =
@@ -422,8 +441,8 @@ mod tests {
         setup_style(&ctx);
         let s = snapshot();
         let (_, targets) = frame(&ctx, &s, vec![]);
-        // Start/Stop、QvPen、スイッチ 7 つ
-        assert_eq!(targets.len(), 9);
+        // Start/Stop、QvPen、スイッチ 7 つ、キー割り当て変更
+        assert_eq!(targets.len(), 10);
         for t in &targets {
             let (clicked, _) = frame(&ctx, &s, click(t.rect.center()));
             assert_eq!(clicked, vec![t.action], "{:?} を押したとき", t.action);
@@ -461,7 +480,24 @@ mod tests {
         let s = snapshot();
         let (_, targets) = frame(&ctx, &s, vec![]);
         let fields: Vec<OverlayAction> = overlay_fields(&s).iter().map(|f| f.action).collect();
-        let switches: Vec<OverlayAction> = targets[2..].iter().map(|t| t.action).collect();
+        let switches: Vec<OverlayAction> = targets[2..9].iter().map(|t| t.action).collect();
         assert_eq!(switches, fields);
+        assert_eq!(targets[9].action, OverlayAction::OpenBindingUi);
+    }
+
+    #[test]
+    fn binding_button_leaves_room_for_the_text_card() {
+        // キー割り当て変更のボタンの下に、認識結果のカードの高さが十分残る
+        let ctx = egui::Context::default();
+        let s = snapshot();
+        let (_, targets) = frame(&ctx, &s, vec![]);
+        let open = targets
+            .iter()
+            .find(|t| t.action == OverlayAction::OpenBindingUi)
+            .unwrap();
+        assert!(
+            LOGICAL_H - 20.0 - (open.rect.bottom() + 14.0) >= 150.0,
+            "認識結果のカードが狭すぎる"
+        );
     }
 }

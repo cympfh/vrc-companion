@@ -6,7 +6,7 @@
 //! 書き込みのみを扱う純粋度の高いロジックであり、Windows専用のffi.rsとは独立させて
 //! non-Windows host(WSL)でもユニットテストできるようにしている。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// ダッシュボードオーバーレイの`CreateDashboardOverlay`キー(session.rsが`create_dashboard_overlay`
 /// に渡す値)と一致させる必要がある — OpenVR仕様上、オーバーレイのキーと登録アプリの
@@ -16,8 +16,15 @@ const APP_NAME: &str = "VRC Companion";
 const MANIFEST_FILE_NAME: &str = "vrc-companion.vrmanifest";
 
 /// OpenVRのアプリケーションマニフェストJSONを組み立てる純粋関数。
-pub fn build_manifest_json(app_key: &str, name: &str, exe_path: &str) -> String {
-    serde_json::json!({
+/// `action_manifest_path` は SteamVR Input のアクションマニフェスト(input_manifest.rs)。
+/// これがあると、アプリが起動していなくても SteamVR のバインド画面にこのアプリが出る。
+pub fn build_manifest_json(
+    app_key: &str,
+    name: &str,
+    exe_path: &str,
+    action_manifest_path: Option<&str>,
+) -> String {
+    let mut json = serde_json::json!({
         "source": "custom",
         "applications": [
             {
@@ -32,26 +39,39 @@ pub fn build_manifest_json(app_key: &str, name: &str, exe_path: &str) -> String 
                 }
             }
         ]
-    })
-    .to_string()
+    });
+    if let Some(path) = action_manifest_path {
+        json["applications"][0]["action_manifest_path"] = path.into();
+    }
+    json.to_string()
 }
 
-/// マニフェストを自身のconfig dir配下に書き込み、そのフルパスを返す。
-/// session.rs(Windows専用)からのみ呼ばれるため、non-Windows host buildでは常にdead_code
-/// になる — bridge.rsの`OverlayAction`と同じ理由で明示的に許容する。
-#[allow(dead_code)]
-pub fn write_manifest() -> Result<PathBuf, String> {
+/// マニフェストを自身の config dir(%APPDATA%\vrc-companion)に書き込み、そのフルパスを返す。
+/// session.rs(Windows専用)からのみ呼ばれるため、non-Windows host build では dead_code になる。
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn write_manifest(action_manifest_path: Option<&Path>) -> Result<PathBuf, String> {
     let exe_path = std::env::current_exe().map_err(|e| format!("current_exe取得失敗: {}", e))?;
-    let json = build_manifest_json(APP_KEY, APP_NAME, &exe_path.to_string_lossy());
-
     let config_dir = dirs::config_dir()
         .ok_or_else(|| "config dir取得失敗".to_string())?
         .join("vrc-companion");
-    std::fs::create_dir_all(&config_dir).map_err(|e| format!("config dir作成失敗: {}", e))?;
+    write_manifest_in(
+        &config_dir,
+        &exe_path.to_string_lossy(),
+        action_manifest_path,
+    )
+}
 
-    let manifest_path = config_dir.join(MANIFEST_FILE_NAME);
+/// `dir` にマニフェストを書く(テストは一時ディレクトリに書く。本物のファイルには触らない)
+fn write_manifest_in(
+    dir: &Path,
+    exe_path: &str,
+    action_manifest_path: Option<&Path>,
+) -> Result<PathBuf, String> {
+    let action_manifest_path = action_manifest_path.map(|p| p.to_string_lossy().into_owned());
+    let json = build_manifest_json(APP_KEY, APP_NAME, exe_path, action_manifest_path.as_deref());
+    std::fs::create_dir_all(dir).map_err(|e| format!("config dir作成失敗: {}", e))?;
+    let manifest_path = dir.join(MANIFEST_FILE_NAME);
     std::fs::write(&manifest_path, json).map_err(|e| format!("マニフェスト書き込み失敗: {}", e))?;
-
     Ok(manifest_path)
 }
 
@@ -61,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_build_manifest_json_contains_app_key_name_and_path() {
-        let json = build_manifest_json("test.app_key", "Test App", r"C:\path\to\app.exe");
+        let json = build_manifest_json("test.app_key", "Test App", r"C:\path\to\app.exe", None);
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let app = &parsed["applications"][0];
         assert_eq!(app["app_key"], "test.app_key");
@@ -69,14 +89,34 @@ mod tests {
         assert_eq!(app["binary_path_windows"], r"C:\path\to\app.exe");
         assert_eq!(app["is_dashboard_overlay"], true);
         assert_eq!(app["strings"]["en_us"]["name"], "Test App");
+        assert!(app.get("action_manifest_path").is_none());
+    }
+
+    #[test]
+    fn test_build_manifest_json_includes_action_manifest_path() {
+        let json = build_manifest_json(
+            "test.app_key",
+            "Test App",
+            r"C:\path\to\app.exe",
+            Some(r"C:\cfg\steamvr_input\actions.json"),
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed["applications"][0]["action_manifest_path"],
+            r"C:\cfg\steamvr_input\actions.json"
+        );
     }
 
     #[test]
     fn test_write_manifest_writes_file_with_own_app_key() {
-        let path = write_manifest().unwrap();
+        // 本物の %APPDATA%\vrc-companion\vrc-companion.vrmanifest には触らない
+        // (以前は本物を書いて消していたので、Windows でテストを走らせると SteamVR の自動起動が外れた)
+        let dir = std::env::temp_dir().join(format!("vrc-companion-test-{}", std::process::id()));
+        let path = write_manifest_in(&dir, r"C:\path\to\app.exe", None).unwrap();
+        assert!(path.starts_with(&dir));
         let content = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["applications"][0]["app_key"], APP_KEY);
-        std::fs::remove_file(&path).ok();
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

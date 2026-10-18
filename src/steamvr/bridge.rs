@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::config::Config;
@@ -16,6 +18,13 @@ pub struct OverlaySnapshot {
     pub last_transcription: String,
     pub last_eliza_response: String,
     pub last_translated_response: String,
+}
+
+/// App → オーバーレイのスレッドへの頼みごと(SteamVR を呼べるのはそのスレッドだけ)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayCommand {
+    /// SteamVR のキー割り当て画面を PC の画面に開く(設定画面の「キー割り当て変更」)
+    OpenBindingUi,
 }
 
 impl OverlaySnapshot {
@@ -118,15 +127,41 @@ pub enum OverlayAction {
     ToggleAutoTranslate,
     CallQvPen,
     ToggleRecording,
+    /// 録音していなければ開始する(SteamVR のボタン割り当て「録音を開始」)
+    StartRecording,
+    /// オーバーレイの「割り当てを変える」ボタン。オーバーレイのスレッドが自分で処理し、App には送らない
+    OpenBindingUi,
+}
+
+impl OverlayAction {
+    /// SteamVR のボタン割り当て(input_manifest.rs)→ アプリの操作
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn from_input(action: super::input_manifest::InputAction) -> Self {
+        use super::input_manifest::InputAction;
+        match action {
+            InputAction::StartRecording => OverlayAction::StartRecording,
+            InputAction::ToggleRecording => OverlayAction::ToggleRecording,
+            InputAction::CallQvPen => OverlayAction::CallQvPen,
+        }
+    }
 }
 
 pub struct OverlayHandle {
     pub snapshot_tx: Sender<OverlaySnapshot>,
     pub action_rx: Receiver<OverlayAction>,
+    pub command_tx: Sender<OverlayCommand>,
+    /// いま SteamVR につながっているか(オーバーレイのスレッドが更新する)
+    pub connected: Arc<AtomicBool>,
 }
 
-/// SteamVR オーバーレイ描画スレッドを起動する。SteamVR未起動・DLL不在などは
-/// 非致命的に扱い None を返す（呼び出し側は他機能に影響させない）。
+impl OverlayHandle {
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::SeqCst)
+    }
+}
+
+/// SteamVR オーバーレイのスレッドを起動する(Windows では常に Some、それ以外は None)。
+/// SteamVR が動いていなくてもよい: スレッドが SteamVR の起動を待ち、来たらつなぐ(`is_connected`)。
 /// `width_m` はオーバーレイの表示幅(メートル、Config の `steamvr_overlay_width_m`)。
 #[cfg(windows)]
 pub fn start(initial: OverlaySnapshot, width_m: f32) -> Option<OverlayHandle> {
@@ -141,6 +176,23 @@ pub fn start(_initial: OverlaySnapshot, _width_m: f32) -> Option<OverlayHandle> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_from_input_maps_every_steamvr_action() {
+        use crate::steamvr::input_manifest::InputAction;
+        assert_eq!(
+            OverlayAction::from_input(InputAction::StartRecording),
+            OverlayAction::StartRecording
+        );
+        assert_eq!(
+            OverlayAction::from_input(InputAction::ToggleRecording),
+            OverlayAction::ToggleRecording
+        );
+        assert_eq!(
+            OverlayAction::from_input(InputAction::CallQvPen),
+            OverlayAction::CallQvPen
+        );
+    }
 
     #[test]
     fn test_overlay_snapshot_from_config_copies_all_fields() {

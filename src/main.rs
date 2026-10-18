@@ -79,7 +79,6 @@ struct App {
     tokio_runtime: Option<tokio::runtime::Runtime>,
     eliza_response_receiver: Option<Receiver<Result<String, String>>>,
     translate_response_receiver: Option<Receiver<Result<(String, String), String>>>,
-    mute_trigger_receiver: Receiver<()>,
     steamvr_overlay: Option<OverlayHandle>,
 
     show_settings: bool,
@@ -104,9 +103,6 @@ impl App {
             .and_then(|name| available_devices.iter().position(|d| d == name))
             .unwrap_or(0);
 
-        let (mute_trigger_sender, mute_trigger_receiver) = channel::<()>();
-        vrchat::start_mute_listener(mute_trigger_sender);
-
         let steamvr_overlay = steamvr::start(
             OverlaySnapshot::from_config(&config, false, "", "", ""),
             config.steamvr_overlay_width_m,
@@ -127,7 +123,6 @@ impl App {
             tokio_runtime: None,
             eliza_response_receiver: None,
             translate_response_receiver: None,
-            mute_trigger_receiver,
             steamvr_overlay,
             show_settings: false,
             available_devices,
@@ -281,6 +276,20 @@ impl App {
         }
     }
 
+    /// SteamVR が動いているときだけ「キー割り当て変更」(SteamVR の割り当て画面を PC の画面に開く)
+    fn steamvr_bindings_button(&self, ui: &mut egui::Ui) {
+        let Some(overlay) = self.steamvr_overlay.as_ref().filter(|o| o.is_connected()) else {
+            return;
+        };
+        ui.add_space(10.0);
+        ui.separator();
+        if ui.button("キー割り当て変更").clicked() {
+            let _ = overlay
+                .command_tx
+                .send(steamvr::OverlayCommand::OpenBindingUi);
+        }
+    }
+
     /// VR オーバーレイ側から受け取ったアクションを Config に適用する。
     /// 排他制御は既存の `enable_*_exclusive` を再利用する（Configの単一ソースを保つ）。
     fn apply_steamvr_action(&mut self, action: OverlayAction) {
@@ -328,6 +337,15 @@ impl App {
                     eprintln!("call_qvpen error: {}", e);
                 }
             }
+            // オーバーレイのスレッドが自分で処理するので、ここには来ない
+            OverlayAction::OpenBindingUi => {}
+            OverlayAction::StartRecording => {
+                // 録音中・文字起こし中は何もしない
+                if !self.is_recording && !self.is_transcribing {
+                    self.is_recording = true;
+                    self.on_start_recording();
+                }
+            }
             OverlayAction::ToggleRecording => {
                 if self.is_recording {
                     self.is_recording = false;
@@ -349,8 +367,10 @@ impl eframe::App for App {
         // オーバーレイでクリックしてもConfig反映・スナップショット再送が止まってしまい、
         // オーバーレイ側では古いスナップショットで再描画され続けてチェックが一瞬で戻る。
         // これを避けるため、オーバーレイが有効な間は一定周期で強制的にrepaintさせる。
-        if self.steamvr_overlay.is_some() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        // SteamVR につながっていない間はゆっくり(つながったら1秒以内に気づいて速くなる)。
+        if let Some(overlay) = &self.steamvr_overlay {
+            let every = if overlay.is_connected() { 100 } else { 1000 };
+            ctx.request_repaint_after(std::time::Duration::from_millis(every));
         }
 
         if let Some(ref receiver) = self.eliza_response_receiver
@@ -388,15 +408,6 @@ impl eframe::App for App {
                 Err(e) => eprintln!("Eliza translate error: {}", e),
             }
             self.translate_response_receiver = None;
-            self.push_steamvr_snapshot();
-        }
-
-        if self.mute_trigger_receiver.try_recv().is_ok()
-            && !self.is_recording
-            && !self.is_transcribing
-        {
-            self.is_recording = true;
-            self.on_start_recording();
             self.push_steamvr_snapshot();
         }
 
@@ -481,6 +492,8 @@ impl eframe::App for App {
                         egui::Slider::new(&mut self.config.silence_threshold, 0.001..=0.3)
                             .logarithmic(true),
                     );
+
+                    self.steamvr_bindings_button(ui);
 
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {

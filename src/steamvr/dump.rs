@@ -6,6 +6,7 @@ use super::bridge::OverlaySnapshot;
 use super::overlay_ui::PIXELS_PER_POINT;
 use super::render::GlOverlayRenderer;
 use super::session::{OVERLAY_HEIGHT, OVERLAY_WIDTH};
+use super::toast_ui::{self, ToastKind};
 
 fn samples() -> Vec<(&'static str, OverlaySnapshot)> {
     let base = OverlaySnapshot {
@@ -48,6 +49,31 @@ pub fn dump_overlay(prefix: &str) -> Result<(), String> {
         write_bmp(&path, w, h, &rgba).map_err(|e| format!("{}: {}", path, e))?;
         println!("{}", path);
     }
+
+    // 録音の開始/終了トースト(背景は透明)
+    let mut toast = GlOverlayRenderer::new(
+        (toast_ui::TOAST_W * PIXELS_PER_POINT) as u32,
+        (toast_ui::TOAST_H * PIXELS_PER_POINT) as u32,
+        PIXELS_PER_POINT,
+    )?;
+    for (name, kind) in [
+        ("toast-start", ToastKind::RecordingStarted),
+        ("toast-stop", ToastKind::RecordingStopped),
+    ] {
+        for _ in 0..3 {
+            toast.render_ui(Vec::new(), |ctx| toast_ui::draw(ctx, kind))?;
+        }
+        write_current(&mut toast, prefix, name)?;
+    }
+
+    Ok(())
+}
+
+fn write_current(renderer: &mut GlOverlayRenderer, prefix: &str, name: &str) -> Result<(), String> {
+    let (w, h, rgba) = renderer.read_rgba()?;
+    let path = format!("{}-{}.bmp", prefix, name);
+    write_bmp(&path, w, h, &rgba).map_err(|e| format!("{}: {}", path, e))?;
+    println!("{}", path);
     Ok(())
 }
 

@@ -3,14 +3,20 @@ pub mod bridge;
 mod dump;
 #[cfg(windows)]
 mod ffi;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod input_manifest;
 mod manifest;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod overlay_ui;
 #[cfg(windows)]
 mod render;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod runtime_watch;
 #[cfg(windows)]
 mod session;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod toast_ui;
 
-pub use bridge::{OverlayAction, OverlayHandle, OverlaySnapshot, start};
+pub use bridge::{OverlayAction, OverlayCommand, OverlayHandle, OverlaySnapshot, start};
 #[cfg(windows)]
 pub use dump::dump_overlay;

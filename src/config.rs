@@ -296,4 +296,14 @@ mod tests {
         assert!(restored.auto_translate_enabled);
         assert_eq!(restored.translate_lang_preset, "CN");
     }
+
+    #[test]
+    fn test_old_osc_mute_key_is_ignored() {
+        // 0.5.0 の途中まであった設定(OSC でミュート2回を受ける)。残っていても読める
+        let json = r#"{"vrchat_osc_mute_trigger_enabled": true, "vrchat_enabled": false}"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(!config.vrchat_enabled);
+        let saved = serde_json::to_string(&config).unwrap();
+        assert!(!saved.contains("vrchat_osc_mute_trigger_enabled"));
+    }
 }
