@@ -10,6 +10,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use super::bridge::{OverlayAction, OverlayHandle, OverlaySnapshot};
 use super::ffi::{self, OpenVrLibrary, Texture_t, VrOverlayHandle};
+use super::input_manifest::{self, InputAction};
 use super::manifest;
 use super::overlay_ui::{LOGICAL_H, LOGICAL_W, PIXELS_PER_POINT};
 use super::render::GlOverlayRenderer;
@@ -48,7 +49,27 @@ fn run(
         }
     };
 
-    ensure_auto_launch_registered(&lib);
+    // SteamVR Input(ボタン割り当て)用のファイルを先に書く。vrmanifest に場所を書き込むため
+    let action_manifest = match input_manifest::default_input_dir()
+        .and_then(|dir| input_manifest::write_input_files(&dir))
+    {
+        Ok(path) => Some(path),
+        Err(e) => {
+            eprintln!(
+                "[SteamVR] アクションマニフェスト書き込み失敗 (ボタン割り当ては無効): {}",
+                e
+            );
+            None
+        }
+    };
+
+    ensure_auto_launch_registered(&lib, action_manifest.as_deref());
+
+    // SetActionManifestPath は最初の PollNextEvent より前に呼ぶ必要がある(openvr.h)ので、
+    // オーバーレイのイベントを読み始める前にここで初期化する
+    let mut input = action_manifest
+        .as_deref()
+        .and_then(|path| SteamVrInput::init(&lib, path));
 
     let overlay_handle = match create_dashboard_overlay(&lib) {
         Ok(h) => h,
@@ -101,6 +122,13 @@ fn run(
             Ok(s) => latest = s,
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => break,
+        }
+
+        // SteamVR のバインドで割り当てられたボタン操作(VRChat を操作中でも届く)
+        if let Some(input) = input.as_mut() {
+            for action in input.poll(&lib) {
+                let _ = action_tx.send(OverlayAction::from_input(action));
+            }
         }
 
         let events = poll_overlay_events(&lib, overlay_handle);
@@ -185,12 +213,12 @@ fn poll_overlay_events(lib: &OpenVrLibrary, handle: VrOverlayHandle) -> Vec<egui
 /// SteamVR起動時にこのexeを自動起動してもらうよう、アプリケーションマニフェストを登録する。
 /// IVRApplicationsインターフェース取得失敗・マニフェスト書き込み失敗はいずれも非致命的に扱い、
 /// オーバーレイ本体の起動をブロックしない(既存のSetOverlayInputMethod等と同じパターン)。
-fn ensure_auto_launch_registered(lib: &OpenVrLibrary) {
+fn ensure_auto_launch_registered(lib: &OpenVrLibrary, action_manifest: Option<&std::path::Path>) {
     let Some(applications) = lib.applications() else {
         return;
     };
 
-    let path = match manifest::write_manifest() {
+    let path = match manifest::write_manifest(action_manifest) {
         Ok(path) => path,
         Err(e) => {
             eprintln!("[SteamVR] マニフェスト書き込み失敗: {}", e);
@@ -216,6 +244,18 @@ fn ensure_auto_launch_registered(lib: &OpenVrLibrary) {
     }
 
     let key = CString::new(manifest::APP_KEY).unwrap();
+
+    // 手で起動した(SteamVR の自動起動でない)場合、SteamVR はこのプロセスがどのアプリか
+    // 分からず、ボタン割り当てが別アプリ扱いになる。自分で名乗っておく(0 = 自分自身)。
+    // SteamVR から起動された場合はすでに分かっているのでエラーが返ることがあるが、問題ない
+    let err = unsafe { (applications.identify_application)(0, key.as_ptr() as *mut c_char) };
+    if err != 0 {
+        eprintln!(
+            "[SteamVR] IdentifyApplication: EVRApplicationError={} (SteamVR から起動された場合は無視してよい)",
+            err
+        );
+    }
+
     let err =
         unsafe { (applications.set_application_auto_launch)(key.as_ptr() as *mut c_char, true) };
     if err != 0 {
@@ -223,6 +263,113 @@ fn ensure_auto_launch_registered(lib: &OpenVrLibrary) {
             "[SteamVR] SetApplicationAutoLaunch 失敗: EVRApplicationError={}",
             err
         );
+    }
+}
+
+/// SteamVR Input(IVRInput)でボタン操作を受け取る。
+///
+/// このアプリは Overlay アプリなので、VRChat(シーンアプリ)が動いている間もアクションが届く。
+/// 優先度 0 で使うので VRChat 側の入力は奪わない(同じ押下が両方に届く)。
+/// SteamVR のダッシュボードを開いている間は届かない(SteamVR の仕様)。
+struct SteamVrInput {
+    action_set: ffi::VRActionSetHandle_t,
+    actions: Vec<(InputAction, ffi::VRActionHandle_t)>,
+    warned: bool,
+}
+
+impl SteamVrInput {
+    fn init(lib: &OpenVrLibrary, manifest_path: &std::path::Path) -> Option<Self> {
+        let input = lib.input()?;
+        let path_c = CString::new(manifest_path.to_string_lossy().into_owned()).ok()?;
+        let err = unsafe { (input.set_action_manifest_path)(path_c.as_ptr() as *mut c_char) };
+        if err != 0 {
+            eprintln!(
+                "[SteamVR] SetActionManifestPath 失敗: EVRInputError={}",
+                err
+            );
+            return None;
+        }
+
+        let set_c = CString::new(input_manifest::ACTION_SET).unwrap();
+        let mut action_set: ffi::VRActionSetHandle_t = 0;
+        let err = unsafe {
+            (input.get_action_set_handle)(set_c.as_ptr() as *mut c_char, &mut action_set)
+        };
+        if err != 0 {
+            eprintln!("[SteamVR] GetActionSetHandle 失敗: EVRInputError={}", err);
+            return None;
+        }
+
+        let mut actions = Vec::new();
+        for action in InputAction::ALL {
+            let name = CString::new(action.path()).unwrap();
+            let mut handle: ffi::VRActionHandle_t = 0;
+            let err =
+                unsafe { (input.get_action_handle)(name.as_ptr() as *mut c_char, &mut handle) };
+            if err != 0 {
+                eprintln!(
+                    "[SteamVR] GetActionHandle({}) 失敗: EVRInputError={}",
+                    action.path(),
+                    err
+                );
+                continue;
+            }
+            actions.push((action, handle));
+        }
+        eprintln!(
+            "[SteamVR] ボタン割り当て(SteamVR Input)を有効化: {}",
+            manifest_path.display()
+        );
+        Some(Self {
+            action_set,
+            actions,
+            warned: false,
+        })
+    }
+
+    /// 前回から「押された」(離された→押された)アクションを返す。毎フレーム呼ぶ
+    fn poll(&mut self, lib: &OpenVrLibrary) -> Vec<InputAction> {
+        let Some(input) = lib.input() else {
+            return Vec::new();
+        };
+        let mut active = ffi::VRActiveActionSet_t {
+            ul_action_set: self.action_set,
+            ul_restricted_to_device: ffi::INVALID_INPUT_VALUE_HANDLE,
+            ul_secondary_action_set: 0,
+            un_padding: 0,
+            n_priority: 0,
+        };
+        let err = unsafe {
+            (input.update_action_state)(
+                &mut active,
+                std::mem::size_of::<ffi::VRActiveActionSet_t>() as u32,
+                1,
+            )
+        };
+        if err != 0 {
+            if !self.warned {
+                eprintln!("[SteamVR] UpdateActionState 失敗: EVRInputError={}", err);
+                self.warned = true;
+            }
+            return Vec::new();
+        }
+
+        let mut pressed = Vec::new();
+        for &(action, handle) in &self.actions {
+            let mut data = ffi::InputDigitalActionData_t::default();
+            let err = unsafe {
+                (input.get_digital_action_data)(
+                    handle,
+                    &mut data,
+                    std::mem::size_of::<ffi::InputDigitalActionData_t>() as u32,
+                    ffi::INVALID_INPUT_VALUE_HANDLE,
+                )
+            };
+            if err == 0 && data.b_active && data.b_changed && data.b_state {
+                pressed.push(action);
+            }
+        }
+        pressed
     }
 }
 

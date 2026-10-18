@@ -17,12 +17,44 @@ use std::ffi::{c_char, c_void};
 
 pub const IVROVERLAY_VERSION: &str = "IVROverlay_028";
 pub const IVRAPPLICATIONS_VERSION: &str = "IVRApplications_008";
+/// 新しい順に試す。使うのはテーブル先頭の6関数だけで、ここは 010 と 011 で同じ並び。
+pub const IVRINPUT_VERSIONS: [&str; 2] = ["IVRInput_011", "IVRInput_010"];
 const VR_APPLICATION_TYPE_OVERLAY: i32 = 2;
 
 pub type VrOverlayHandle = u64;
 pub type EVRInitError = i32;
 pub type EVROverlayError = i32;
 pub type EVRApplicationError = i32;
+pub type EVRInputError = i32;
+#[allow(non_camel_case_types)]
+pub type VRActionHandle_t = u64;
+#[allow(non_camel_case_types)]
+pub type VRActionSetHandle_t = u64;
+#[allow(non_camel_case_types)]
+pub type VRInputValueHandle_t = u64;
+pub const INVALID_INPUT_VALUE_HANDLE: VRInputValueHandle_t = 0;
+
+/// `VRActiveActionSet_t`(openvr.h)。nPriority は 0(通常)で使う — 0 ならゲーム(VRChat)の
+/// 入力を奪わず、同じボタン押下がゲームとこのアプリの両方に届く。
+#[repr(C)]
+pub struct VRActiveActionSet_t {
+    pub ul_action_set: VRActionSetHandle_t,
+    pub ul_restricted_to_device: VRInputValueHandle_t,
+    pub ul_secondary_action_set: VRActionSetHandle_t,
+    pub un_padding: u32,
+    pub n_priority: i32,
+}
+
+/// `InputDigitalActionData_t`(openvr.h、Windows は pack 8)
+#[repr(C)]
+#[derive(Default)]
+pub struct InputDigitalActionData_t {
+    pub b_active: bool,
+    pub active_origin: VRInputValueHandle_t,
+    pub b_state: bool,
+    pub b_changed: bool,
+    pub f_update_time: f32,
+}
 
 pub type ETextureType = i32;
 pub const TEXTURE_TYPE_OPENGL: ETextureType = 1;
@@ -193,7 +225,7 @@ pub struct VrIvApplicationsFnTable {
     pub launch_application_from_mime_type: PlaceholderFn,
     pub launch_dashboard_overlay: PlaceholderFn,
     pub cancel_application_launch: PlaceholderFn,
-    pub identify_application: PlaceholderFn,
+    pub identify_application: unsafe extern "C" fn(u32, *mut c_char) -> EVRApplicationError,
     pub get_application_process_id: PlaceholderFn,
     pub get_applications_error_name_from_enum: PlaceholderFn,
     pub get_application_property_string: PlaceholderFn,
@@ -219,12 +251,64 @@ pub struct VrIvApplicationsFnTable {
 #[cfg(test)]
 const APPLICATIONS_FN_TABLE_FIELD_COUNT: usize = 31;
 
+/// `VR_IVRInput_FnTable`(openvr_capi.h、取得日 2026-10-18、IVRInput_011)。
+/// 呼ぶのは先頭6つだけ。残りは並びとサイズを保つためのプレースホルダ。
+#[repr(C)]
+pub struct VrIvInputFnTable {
+    pub set_action_manifest_path: unsafe extern "C" fn(*mut c_char) -> EVRInputError,
+    pub get_action_set_handle:
+        unsafe extern "C" fn(*mut c_char, *mut VRActionSetHandle_t) -> EVRInputError,
+    pub get_action_handle:
+        unsafe extern "C" fn(*mut c_char, *mut VRActionHandle_t) -> EVRInputError,
+    pub get_input_source_handle: PlaceholderFn,
+    pub update_action_state:
+        unsafe extern "C" fn(*mut VRActiveActionSet_t, u32, u32) -> EVRInputError,
+    pub get_digital_action_data: unsafe extern "C" fn(
+        VRActionHandle_t,
+        *mut InputDigitalActionData_t,
+        u32,
+        VRInputValueHandle_t,
+    ) -> EVRInputError,
+    pub get_analog_action_data: PlaceholderFn,
+    pub get_pose_action_data_relative_to_now: PlaceholderFn,
+    pub get_pose_action_data_for_next_frame: PlaceholderFn,
+    pub get_skeletal_action_data: PlaceholderFn,
+    pub get_dominant_hand: PlaceholderFn,
+    pub set_dominant_hand: PlaceholderFn,
+    pub get_eye_tracking_data_relative_to_now: PlaceholderFn,
+    pub get_eye_tracking_data_for_next_frame: PlaceholderFn,
+    pub get_bone_count: PlaceholderFn,
+    pub get_bone_hierarchy: PlaceholderFn,
+    pub get_bone_name: PlaceholderFn,
+    pub get_skeletal_reference_transforms: PlaceholderFn,
+    pub get_skeletal_tracking_level: PlaceholderFn,
+    pub get_skeletal_bone_data: PlaceholderFn,
+    pub get_skeletal_summary_data: PlaceholderFn,
+    pub get_skeletal_bone_data_compressed: PlaceholderFn,
+    pub decompress_skeletal_bone_data: PlaceholderFn,
+    pub trigger_haptic_vibration_action: PlaceholderFn,
+    pub get_action_origins: PlaceholderFn,
+    pub get_origin_localized_name: PlaceholderFn,
+    pub get_origin_tracked_device_info: PlaceholderFn,
+    pub get_action_binding_info: PlaceholderFn,
+    pub show_action_origins: PlaceholderFn,
+    pub show_bindings_for_action_set: PlaceholderFn,
+    pub get_component_state_for_binding: PlaceholderFn,
+    pub is_using_legacy_input: PlaceholderFn,
+    pub open_binding_ui: PlaceholderFn,
+    pub get_binding_variant: PlaceholderFn,
+}
+
+#[cfg(test)]
+const INPUT_FN_TABLE_FIELD_COUNT: usize = 34;
+
 /// openvr_api.dll をロードし、IVROverlay の関数ポインタテーブルを保持する。
 /// `_lib` が生きている間だけ `overlay_table` は有効。
 pub struct OpenVrLibrary {
     _lib: Library,
     overlay_table: *const VrIvOverlayFnTable,
     applications_table: Option<*const VrIvApplicationsFnTable>,
+    input_table: Option<*const VrIvInputFnTable>,
 }
 
 impl OpenVrLibrary {
@@ -276,10 +360,25 @@ impl OpenVrLibrary {
             Some(applications_table_ptr as *const VrIvApplicationsFnTable)
         };
 
+        // IVRInput はボタン操作(SteamVR のバインド)を受け取るためだけに使う。
+        // 取れなくてもオーバーレイ本体には影響させない(non-fatal)。
+        let mut input_table = None;
+        for v in IVRINPUT_VERSIONS {
+            let name = std::ffi::CString::new(format!("FnTable:{}", v)).unwrap();
+            let mut err: EVRInitError = 0;
+            let ptr = unsafe { vr_get_generic_interface(name.as_ptr(), &mut err) };
+            if err == 0 && ptr != 0 {
+                input_table = Some(ptr as *const VrIvInputFnTable);
+                break;
+            }
+            eprintln!("[SteamVR] {} インターフェース取得失敗: code={}", v, err);
+        }
+
         Ok(Self {
             _lib: lib,
             overlay_table: table_ptr as *const VrIvOverlayFnTable,
             applications_table,
+            input_table,
         })
     }
 
@@ -289,6 +388,10 @@ impl OpenVrLibrary {
 
     pub fn applications(&self) -> Option<&VrIvApplicationsFnTable> {
         self.applications_table.map(|ptr| unsafe { &*ptr })
+    }
+
+    pub fn input(&self) -> Option<&VrIvInputFnTable> {
+        self.input_table.map(|ptr| unsafe { &*ptr })
     }
 }
 
@@ -322,6 +425,23 @@ mod tests {
             APPLICATIONS_FN_TABLE_FIELD_COUNT * std::mem::size_of::<usize>(),
             "VR_IVRApplications_FnTable のフィールド数が公式ヘッダと食い違っている可能性がある"
         );
+    }
+
+    #[test]
+    fn test_input_fn_table_field_count_matches_official_header() {
+        assert_eq!(
+            std::mem::size_of::<VrIvInputFnTable>(),
+            INPUT_FN_TABLE_FIELD_COUNT * std::mem::size_of::<usize>(),
+            "VR_IVRInput_FnTable のフィールド数が公式ヘッダと食い違っている可能性がある"
+        );
+    }
+
+    #[test]
+    fn test_input_struct_sizes_match_official_header() {
+        // VRActiveActionSet_t: u64×3 + u32 + i32 = 32
+        assert_eq!(std::mem::size_of::<VRActiveActionSet_t>(), 32);
+        // InputDigitalActionData_t: bool(+7) + u64 + bool + bool(+2) + f32 = 24
+        assert_eq!(std::mem::size_of::<InputDigitalActionData_t>(), 24);
     }
 
     #[test]

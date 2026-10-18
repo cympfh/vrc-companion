@@ -3,6 +3,8 @@ pub mod bridge;
 mod dump;
 #[cfg(windows)]
 mod ffi;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod input_manifest;
 mod manifest;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod overlay_ui;

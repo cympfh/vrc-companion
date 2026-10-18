@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-18
+
+### Added
+
+- コントローラーのボタンで操作できるように（SteamVR のバインド機能）。VRChat を操作中でも効く。割り当てられる操作は「録音を開始」「録音の開始/停止」「QvPen を呼ぶ」。SteamVR の設定 → コントローラー → コントローラーのバインドを管理 で好きなボタン・押し方（1回・2回・長押しなど）に変えられる
+- 既定の割り当て: VRChat のマイクボタンを2回押すと「録音を開始」（Steam Frame は左の十字キー下、Index は左 A、Quest は左 X）。いままでの「ミュート2回」と同じ操作
+- 設定 `vrchat_osc_mute_trigger_enabled`（Settings 画面のチェック）: OSC でミュート2回を受け取るか。既定はこれまでどおりオン
+
 ## [0.4.0] - 2026-10-18
 
 ### Changed

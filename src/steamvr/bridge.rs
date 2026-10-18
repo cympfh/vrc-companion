@@ -118,6 +118,22 @@ pub enum OverlayAction {
     ToggleAutoTranslate,
     CallQvPen,
     ToggleRecording,
+    /// 録音していなければ開始する(SteamVR のボタン割り当て「録音を開始」。
+    /// 従来の VRChat ミュート2回(OSC)と同じ挙動)
+    StartRecording,
+}
+
+impl OverlayAction {
+    /// SteamVR のボタン割り当て(input_manifest.rs)→ アプリの操作
+    #[allow(dead_code)]
+    pub fn from_input(action: super::input_manifest::InputAction) -> Self {
+        use super::input_manifest::InputAction;
+        match action {
+            InputAction::StartRecording => OverlayAction::StartRecording,
+            InputAction::ToggleRecording => OverlayAction::ToggleRecording,
+            InputAction::CallQvPen => OverlayAction::CallQvPen,
+        }
+    }
 }
 
 pub struct OverlayHandle {
@@ -141,6 +157,23 @@ pub fn start(_initial: OverlaySnapshot, _width_m: f32) -> Option<OverlayHandle> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_from_input_maps_every_steamvr_action() {
+        use crate::steamvr::input_manifest::InputAction;
+        assert_eq!(
+            OverlayAction::from_input(InputAction::StartRecording),
+            OverlayAction::StartRecording
+        );
+        assert_eq!(
+            OverlayAction::from_input(InputAction::ToggleRecording),
+            OverlayAction::ToggleRecording
+        );
+        assert_eq!(
+            OverlayAction::from_input(InputAction::CallQvPen),
+            OverlayAction::CallQvPen
+        );
+    }
 
     #[test]
     fn test_overlay_snapshot_from_config_copies_all_fields() {

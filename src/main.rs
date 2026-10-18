@@ -105,7 +105,13 @@ impl App {
             .unwrap_or(0);
 
         let (mute_trigger_sender, mute_trigger_receiver) = channel::<()>();
-        vrchat::start_mute_listener(mute_trigger_sender);
+        // OSC は設定で切れる(SteamVR のボタン割り当てで足りる場合)。送り手を捨てるだけなので
+        // 受け手は何も受け取らないまま
+        if config.vrchat_osc_mute_trigger_enabled {
+            vrchat::start_mute_listener(mute_trigger_sender);
+        } else {
+            drop(mute_trigger_sender);
+        }
 
         let steamvr_overlay = steamvr::start(
             OverlaySnapshot::from_config(&config, false, "", "", ""),
@@ -328,6 +334,13 @@ impl App {
                     eprintln!("call_qvpen error: {}", e);
                 }
             }
+            OverlayAction::StartRecording => {
+                // 従来の OSC(ミュート2回)と同じ条件: 録音中・文字起こし中は何もしない
+                if !self.is_recording && !self.is_transcribing {
+                    self.is_recording = true;
+                    self.on_start_recording();
+                }
+            }
             OverlayAction::ToggleRecording => {
                 if self.is_recording {
                     self.is_recording = false;
@@ -480,6 +493,11 @@ impl eframe::App for App {
                     ui.add(
                         egui::Slider::new(&mut self.config.silence_threshold, 0.001..=0.3)
                             .logarithmic(true),
+                    );
+                    ui.add_space(10.0);
+                    ui.checkbox(
+                        &mut self.config.vrchat_osc_mute_trigger_enabled,
+                        "VRChat のミュート2回で録音開始（OSC。次の起動から反映）",
                     );
 
                     ui.add_space(10.0);
