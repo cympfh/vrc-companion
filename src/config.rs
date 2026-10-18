@@ -35,10 +35,6 @@ pub struct Config {
     /// SteamVR オーバーレイの表示幅(メートル)。起動時に読む
     #[serde(default = "default_steamvr_overlay_width_m")]
     pub steamvr_overlay_width_m: f32,
-    /// VRChat の「ミュートボタン2回」を OSC(UDP 9001)で受けて録音を開始するか。起動時に読む。
-    /// SteamVR のボタン割り当て(既定は同じ操作)で足りるなら false にすると OSC を受けなくなる
-    #[serde(default = "default_vrchat_osc_mute_trigger_enabled")]
-    pub vrchat_osc_mute_trigger_enabled: bool,
 }
 
 fn default_silence_duration_secs() -> f32 {
@@ -95,12 +91,6 @@ fn default_steamvr_overlay_width_m() -> f32 {
     2.4
 }
 
-/// 既存の利用者の挙動を変えないよう、当面は true(SteamVR のボタン割り当てと併用)。
-/// 両方から同時に届いても、録音中は「録音を開始」を無視するので二重には始まらない
-fn default_vrchat_osc_mute_trigger_enabled() -> bool {
-    true
-}
-
 /// おかしな値(0、負、巨大)で SteamVR に渡さないように丸める
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn clamp_overlay_width_m(w: f32) -> f32 {
@@ -129,7 +119,6 @@ impl Default for Config {
             translate_lang_preset: default_translate_lang_preset(),
             translate_lang_custom: default_translate_lang_custom(),
             steamvr_overlay_width_m: default_steamvr_overlay_width_m(),
-            vrchat_osc_mute_trigger_enabled: default_vrchat_osc_mute_trigger_enabled(),
         }
     }
 }
@@ -245,7 +234,6 @@ mod tests {
     fn test_steamvr_overlay_width_default_and_clamp() {
         let config: Config = serde_json::from_str("{}").unwrap();
         assert_eq!(config.steamvr_overlay_width_m, 2.4);
-        assert!(config.vrchat_osc_mute_trigger_enabled);
         assert_eq!(clamp_overlay_width_m(2.0), 2.0);
         assert_eq!(clamp_overlay_width_m(0.0), 0.5);
         assert_eq!(clamp_overlay_width_m(100.0), 6.0);
@@ -307,5 +295,15 @@ mod tests {
         let restored: Config = serde_json::from_str(&json).unwrap();
         assert!(restored.auto_translate_enabled);
         assert_eq!(restored.translate_lang_preset, "CN");
+    }
+
+    #[test]
+    fn test_old_osc_mute_key_is_ignored() {
+        // 0.5.0 の途中まであった設定(OSC でミュート2回を受ける)。残っていても読める
+        let json = r#"{"vrchat_osc_mute_trigger_enabled": true, "vrchat_enabled": false}"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(!config.vrchat_enabled);
+        let saved = serde_json::to_string(&config).unwrap();
+        assert!(!saved.contains("vrchat_osc_mute_trigger_enabled"));
     }
 }

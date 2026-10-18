@@ -2,7 +2,7 @@
 //! 本物の描画経路(WGL + egui_glow)で BMP に書き出す。見た目の確認・README 用。
 //! サンプルの文字列は合成データ。
 
-use super::bridge::OverlaySnapshot;
+use super::bridge::{ActionView, InputStatus, InputView, OverlaySnapshot};
 use super::overlay_ui::PIXELS_PER_POINT;
 use super::render::GlOverlayRenderer;
 use super::session::{OVERLAY_HEIGHT, OVERLAY_WIDTH};
@@ -22,6 +22,26 @@ fn samples() -> Vec<(&'static str, OverlaySnapshot)> {
         last_eliza_response: String::new(),
         last_translated_response: "Hello, nice weather today. Want to go world hopping later?"
             .to_string(),
+        input: InputView {
+            status: InputStatus::Ready,
+            actions: vec![
+                ActionView {
+                    label: "録音を開始",
+                    bindings: vec!["左手 十字キー下（2回押し）".to_string()],
+                    fired: true,
+                },
+                ActionView {
+                    label: "録音の開始/停止",
+                    bindings: vec![],
+                    fired: false,
+                },
+                ActionView {
+                    label: "QvPen を呼ぶ",
+                    bindings: vec!["右手 B（長押し）".to_string()],
+                    fired: false,
+                },
+            ],
+        },
     };
     let recording = OverlaySnapshot {
         is_recording: true,

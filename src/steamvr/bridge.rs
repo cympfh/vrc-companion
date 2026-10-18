@@ -1,4 +1,5 @@
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 use crate::config::Config;
 
@@ -16,6 +17,43 @@ pub struct OverlaySnapshot {
     pub last_transcription: String,
     pub last_eliza_response: String,
     pub last_translated_response: String,
+    /// SteamVR のボタン割り当ての様子。App は既定値を入れ、オーバーレイのスレッドが
+    /// 描画の直前に本物の値で上書きする
+    pub input: InputView,
+}
+
+/// SteamVR Input の状態(オーバーレイの「ボタン割り当て」カードと設定画面に出す)
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct InputView {
+    pub status: InputStatus,
+    pub actions: Vec<ActionView>,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum InputStatus {
+    /// SteamVR に接続中(または SteamVR が動いていない)
+    #[default]
+    Starting,
+    Ready,
+    Unavailable(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionView {
+    pub label: &'static str,
+    /// 割り当てられているボタン(例: "左手 十字キー下（2回押し）")。空なら未割り当て
+    pub bindings: Vec<String>,
+    /// いま反応した(押されてから少しの間 true)。動作確認用
+    pub fired: bool,
+}
+
+/// App → オーバーレイのスレッドへの頼みごと(SteamVR を呼べるのはそのスレッドだけ)
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayCommand {
+    /// SteamVR のボタン割り当て画面を開く。true = PC の画面、false = VR の中
+    OpenBindingUi { on_desktop: bool },
 }
 
 impl OverlaySnapshot {
@@ -38,6 +76,7 @@ impl OverlaySnapshot {
             last_transcription: last_transcription.to_string(),
             last_eliza_response: last_eliza_response.to_string(),
             last_translated_response: last_translated_response.to_string(),
+            input: InputView::default(),
         }
     }
 }
@@ -118,9 +157,10 @@ pub enum OverlayAction {
     ToggleAutoTranslate,
     CallQvPen,
     ToggleRecording,
-    /// 録音していなければ開始する(SteamVR のボタン割り当て「録音を開始」。
-    /// 従来の VRChat ミュート2回(OSC)と同じ挙動)
+    /// 録音していなければ開始する(SteamVR のボタン割り当て「録音を開始」)
     StartRecording,
+    /// オーバーレイの「割り当てを変える」ボタン。オーバーレイのスレッドが自分で処理し、App には送らない
+    OpenBindingUi,
 }
 
 impl OverlayAction {
@@ -139,6 +179,10 @@ impl OverlayAction {
 pub struct OverlayHandle {
     pub snapshot_tx: Sender<OverlaySnapshot>,
     pub action_rx: Receiver<OverlayAction>,
+    #[allow(dead_code)]
+    pub command_tx: Sender<OverlayCommand>,
+    /// ボタン割り当ての様子(設定画面に出す)。オーバーレイのスレッドが更新する
+    pub input_view: Arc<Mutex<InputView>>,
 }
 
 /// SteamVR オーバーレイ描画スレッドを起動する。SteamVR未起動・DLL不在などは
@@ -228,6 +272,7 @@ mod tests {
             last_transcription: String::new(),
             last_eliza_response: String::new(),
             last_translated_response: String::new(),
+            input: InputView::default(),
         }
     }
 

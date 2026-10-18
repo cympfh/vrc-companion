@@ -13,6 +13,8 @@ mod render;
 #[cfg(windows)]
 mod session;
 
-pub use bridge::{OverlayAction, OverlayHandle, OverlaySnapshot, start};
+pub use bridge::{
+    InputStatus, OverlayAction, OverlayCommand, OverlayHandle, OverlaySnapshot, start,
+};
 #[cfg(windows)]
 pub use dump::dump_overlay;

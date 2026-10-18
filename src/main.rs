@@ -79,7 +79,6 @@ struct App {
     tokio_runtime: Option<tokio::runtime::Runtime>,
     eliza_response_receiver: Option<Receiver<Result<String, String>>>,
     translate_response_receiver: Option<Receiver<Result<(String, String), String>>>,
-    mute_trigger_receiver: Receiver<()>,
     steamvr_overlay: Option<OverlayHandle>,
 
     show_settings: bool,
@@ -104,15 +103,6 @@ impl App {
             .and_then(|name| available_devices.iter().position(|d| d == name))
             .unwrap_or(0);
 
-        let (mute_trigger_sender, mute_trigger_receiver) = channel::<()>();
-        // OSC は設定で切れる(SteamVR のボタン割り当てで足りる場合)。送り手を捨てるだけなので
-        // 受け手は何も受け取らないまま
-        if config.vrchat_osc_mute_trigger_enabled {
-            vrchat::start_mute_listener(mute_trigger_sender);
-        } else {
-            drop(mute_trigger_sender);
-        }
-
         let steamvr_overlay = steamvr::start(
             OverlaySnapshot::from_config(&config, false, "", "", ""),
             config.steamvr_overlay_width_m,
@@ -133,7 +123,6 @@ impl App {
             tokio_runtime: None,
             eliza_response_receiver: None,
             translate_response_receiver: None,
-            mute_trigger_receiver,
             steamvr_overlay,
             show_settings: false,
             available_devices,
@@ -289,6 +278,68 @@ impl App {
 
     /// VR オーバーレイ側から受け取ったアクションを Config に適用する。
     /// 排他制御は既存の `enable_*_exclusive` を再利用する（Configの単一ソースを保つ）。
+    /// 設定画面の「SteamVR ボタン割り当て」。いま割り当てられているボタンと、押されたときの反応を出す
+    fn steamvr_bindings_section(&self, ui: &mut egui::Ui) {
+        use steamvr::{InputStatus, OverlayCommand};
+        ui.label(egui::RichText::new("SteamVR ボタン割り当て").strong());
+        let Some(overlay) = self.steamvr_overlay.as_ref() else {
+            ui.label("SteamVR が動いていないので使えません");
+            return;
+        };
+        let view = overlay
+            .input_view
+            .lock()
+            .map(|v| v.clone())
+            .unwrap_or_default();
+        match &view.status {
+            InputStatus::Starting => {
+                ui.label("SteamVR に接続中…");
+            }
+            InputStatus::Unavailable(why) => {
+                ui.label(format!("使えません: {}", why));
+            }
+            InputStatus::Ready => {
+                egui::Grid::new("steamvr_bindings")
+                    .num_columns(3)
+                    .spacing([16.0, 6.0])
+                    .show(ui, |ui| {
+                        for a in &view.actions {
+                            ui.label(a.label);
+                            if a.bindings.is_empty() {
+                                ui.weak("未割り当て");
+                            } else {
+                                ui.label(a.bindings.join(" / "));
+                            }
+                            if a.fired {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(0x3d, 0xd6, 0x8c),
+                                    "● 反応",
+                                );
+                            } else {
+                                ui.label("");
+                            }
+                            ui.end_row();
+                        }
+                    });
+            }
+        }
+        ui.horizontal(|ui| {
+            if ui.button("割り当てを変える（PC の画面）").clicked() {
+                let _ = overlay
+                    .command_tx
+                    .send(OverlayCommand::OpenBindingUi { on_desktop: true });
+            }
+            if ui.button("VR の中で開く").clicked() {
+                let _ = overlay
+                    .command_tx
+                    .send(OverlayCommand::OpenBindingUi { on_desktop: false });
+            }
+            if ui.button("ブラウザで開く").clicked() {
+                open_binding_page_in_browser();
+            }
+        });
+    }
+
     fn apply_steamvr_action(&mut self, action: OverlayAction) {
         match action {
             OverlayAction::ToggleClipboard => {
@@ -334,8 +385,10 @@ impl App {
                     eprintln!("call_qvpen error: {}", e);
                 }
             }
+            // オーバーレイのスレッドが自分で処理するので、ここには来ない
+            OverlayAction::OpenBindingUi => {}
             OverlayAction::StartRecording => {
-                // 従来の OSC(ミュート2回)と同じ条件: 録音中・文字起こし中は何もしない
+                // 録音中・文字起こし中は何もしない
                 if !self.is_recording && !self.is_transcribing {
                     self.is_recording = true;
                     self.on_start_recording();
@@ -401,15 +454,6 @@ impl eframe::App for App {
                 Err(e) => eprintln!("Eliza translate error: {}", e),
             }
             self.translate_response_receiver = None;
-            self.push_steamvr_snapshot();
-        }
-
-        if self.mute_trigger_receiver.try_recv().is_ok()
-            && !self.is_recording
-            && !self.is_transcribing
-        {
-            self.is_recording = true;
-            self.on_start_recording();
             self.push_steamvr_snapshot();
         }
 
@@ -494,11 +538,10 @@ impl eframe::App for App {
                         egui::Slider::new(&mut self.config.silence_threshold, 0.001..=0.3)
                             .logarithmic(true),
                     );
+
                     ui.add_space(10.0);
-                    ui.checkbox(
-                        &mut self.config.vrchat_osc_mute_trigger_enabled,
-                        "VRChat のミュート2回で録音開始（OSC。次の起動から反映）",
-                    );
+                    ui.separator();
+                    self.steamvr_bindings_section(ui);
 
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
@@ -869,5 +912,19 @@ impl eframe::App for App {
         if self.is_transcribing {
             ctx.request_repaint();
         }
+    }
+}
+
+/// SteamVR のバインド画面を PC のブラウザで開く(SteamVR が動いている間だけ開ける)
+fn open_binding_page_in_browser() {
+    const URL: &str = "http://localhost:27062/dashboard/controllerbinding.html";
+    #[cfg(windows)]
+    let r = std::process::Command::new("cmd")
+        .args(["/C", "start", "", URL])
+        .spawn();
+    #[cfg(not(windows))]
+    let r = std::process::Command::new("xdg-open").arg(URL).spawn();
+    if let Err(e) = r {
+        eprintln!("ブラウザを開けなかった: {}", e);
     }
 }

@@ -5,9 +5,9 @@
 //! ここはファイル内容を組み立てて書くだけの純粋なロジックで、non-Windows host でも
 //! テストできる(実際の `SetActionManifestPath` などの呼び出しは session.rs 側)。
 //!
-//! 既定バインドは「VRChat のマイク(ミュート)ボタンをダブルクリック」= これまで OSC で
-//! 検知していた操作と同じにしてある。VRChat 側もそのボタンを2回押されたことになるので、
-//! ミュートは2回切り替わって元に戻る(従来と同じ挙動)。
+//! 既定バインドは「VRChat のマイク(ミュート)ボタンをダブルクリック」(0.4 までは VRChat の
+//! OSC で MuteSelf を見て同じ操作を検知していたが、その仕組みは 0.5 で削除した)。
+//! VRChat 側もそのボタンを2回押されたことになるので、ミュートは2回切り替わって元に戻る。
 //! - Index (knuckles): VRChat の既定のマイクは左 A
 //! - Quest (oculus_touch): 左 X
 //! - Steam Frame (frame_controller): VRChat は Frame 用の既定バインドを持たず、SteamVR が
@@ -52,7 +52,7 @@ impl InputAction {
         }
     }
 
-    fn label_ja(self) -> &'static str {
+    pub fn label_ja(self) -> &'static str {
         match self {
             InputAction::StartRecording => "録音を開始",
             InputAction::ToggleRecording => "録音の開始/停止",
@@ -82,10 +82,16 @@ pub const DEFAULT_BINDINGS: [(&str, &str, &str); 3] = [
     ),
 ];
 
+/// ヘッドセット本体用の空のバインド。無いと SteamVR のログに
+/// 「(frame_hmd) has no configured binding」が出続ける。何も割り当てないので害はない
+pub const EMPTY_BINDINGS: [(&str, &str); 1] = [("frame_hmd", "bindings_frame_hmd.json")];
+
 pub fn build_action_manifest_json() -> String {
     let default_bindings: Vec<_> = DEFAULT_BINDINGS
         .iter()
-        .map(|(controller_type, file, _)| {
+        .map(|(controller_type, file, _)| (*controller_type, *file))
+        .chain(EMPTY_BINDINGS.iter().copied())
+        .map(|(controller_type, file)| {
             serde_json::json!({ "controller_type": controller_type, "binding_url": file })
         })
         .collect();
@@ -148,12 +154,77 @@ pub fn build_binding_json(controller_type: &str, button_path: &str) -> String {
     .unwrap()
 }
 
+/// 何も割り当てないバインド(ヘッドセット本体用)
+pub fn build_empty_binding_json(controller_type: &str) -> String {
+    serde_json::to_string_pretty(&serde_json::json!({
+        "action_manifest_version": 0,
+        "alias_info": {},
+        "app_key": super::manifest::APP_KEY,
+        "bindings": {
+            ACTION_SET: { "chords": [], "haptics": [], "poses": [], "skeleton": [], "sources": [] }
+        },
+        "controller_type": controller_type,
+        "description": "割り当てなし",
+        "name": "VRC Companion default",
+        "options": {},
+        "simulated_actions": []
+    }))
+    .unwrap()
+}
+
+/// SteamVR が返す割り当て(GetActionBindingInfo)を日本語の短い説明にする。
+/// 例: ("/user/hand/left", "/input/dpad_down", "double") → "左手 十字キー下（2回押し）"
+pub fn describe_binding(device_path: &str, input_path: &str, slot: &str) -> String {
+    let hand = match device_path {
+        p if p.ends_with("/hand/left") => "左手 ",
+        p if p.ends_with("/hand/right") => "右手 ",
+        p if p.ends_with("/head") => "ヘッドセット ",
+        _ => "",
+    };
+    let name = input_path.rsplit('/').next().unwrap_or(input_path);
+    let button = match name {
+        "dpad_up" => "十字キー上".to_string(),
+        "dpad_down" => "十字キー下".to_string(),
+        "dpad_left" => "十字キー左".to_string(),
+        "dpad_right" => "十字キー右".to_string(),
+        "trigger" => "トリガー".to_string(),
+        "grip" => "グリップ".to_string(),
+        "bumper" => "バンパー".to_string(),
+        "thumbstick" | "joystick" => "スティック".to_string(),
+        "trackpad" => "トラックパッド".to_string(),
+        "system" => "システム".to_string(),
+        "menu" => "メニュー".to_string(),
+        "view" => "ビュー".to_string(),
+        "thumbrest" => "サムレスト".to_string(),
+        n if n.len() == 1 => n.to_uppercase(),
+        n => n.to_string(),
+    };
+    let how = match slot {
+        "" | "click" => "",
+        "double" => "（2回押し）",
+        "long" => "（長押し）",
+        "held" => "（押している間）",
+        "touch" => "（タッチ）",
+        _ => "",
+    };
+    let how = if how.is_empty() && !matches!(slot, "" | "click") {
+        format!("（{}）", slot)
+    } else {
+        how.to_string()
+    };
+    format!("{}{}{}", hand, button, how)
+}
+
 /// アクションマニフェストと既定バインドを `dir` に書き、マニフェストのフルパスを返す。
 /// 毎回上書きする(ユーザーが SteamVR で変えたバインドは SteamVR 側に保存されるので消えない)
 pub fn write_input_files(dir: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("フォルダ作成失敗: {}", e))?;
     for (controller_type, file, button) in DEFAULT_BINDINGS {
         std::fs::write(dir.join(file), build_binding_json(controller_type, button))
+            .map_err(|e| format!("{} の書き込み失敗: {}", file, e))?;
+    }
+    for (controller_type, file) in EMPTY_BINDINGS {
+        std::fs::write(dir.join(file), build_empty_binding_json(controller_type))
             .map_err(|e| format!("{} の書き込み失敗: {}", file, e))?;
     }
     let manifest_path = dir.join(ACTION_MANIFEST_FILE_NAME);
@@ -202,7 +273,8 @@ mod tests {
             .iter()
             .map(|b| b["binding_url"].as_str().unwrap())
             .collect();
-        assert_eq!(urls.len(), DEFAULT_BINDINGS.len());
+        assert_eq!(urls.len(), DEFAULT_BINDINGS.len() + EMPTY_BINDINGS.len());
+        assert!(urls.contains(&"bindings_frame_hmd.json"));
         for (_, file, _) in DEFAULT_BINDINGS {
             assert!(urls.contains(&file));
         }
@@ -232,13 +304,51 @@ mod tests {
     }
 
     #[test]
+    fn test_describe_binding_in_japanese() {
+        assert_eq!(
+            describe_binding("/user/hand/left", "/input/dpad_down", "double"),
+            "左手 十字キー下（2回押し）"
+        );
+        assert_eq!(
+            describe_binding("/user/hand/right", "/input/a", "click"),
+            "右手 A"
+        );
+        assert_eq!(
+            describe_binding("/user/hand/right", "/input/trigger", "long"),
+            "右手 トリガー（長押し）"
+        );
+        assert_eq!(
+            describe_binding("/user/hand/left", "/input/thumbstick", "north"),
+            "左手 スティック（north）"
+        );
+    }
+
+    #[test]
+    fn test_empty_binding_has_no_sources() {
+        let v: serde_json::Value =
+            serde_json::from_str(&build_empty_binding_json("frame_hmd")).unwrap();
+        assert_eq!(v["controller_type"], "frame_hmd");
+        assert_eq!(
+            v["bindings"][ACTION_SET]["sources"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+
+    #[test]
     fn test_write_input_files_writes_manifest_and_bindings() {
         let dir =
             std::env::temp_dir().join(format!("vrc-companion-input-test-{}", std::process::id()));
         let manifest = write_input_files(&dir).unwrap();
         assert_eq!(manifest, dir.join(ACTION_MANIFEST_FILE_NAME));
         assert!(manifest.is_file());
-        for (_, file, _) in DEFAULT_BINDINGS {
+        let files = DEFAULT_BINDINGS
+            .iter()
+            .map(|b| b.1)
+            .chain(EMPTY_BINDINGS.iter().map(|b| b.1));
+        for file in files {
             let s = std::fs::read_to_string(dir.join(file)).unwrap();
             serde_json::from_str::<serde_json::Value>(&s).unwrap();
         }
