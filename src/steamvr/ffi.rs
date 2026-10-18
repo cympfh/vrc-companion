@@ -20,6 +20,8 @@ pub const IVRAPPLICATIONS_VERSION: &str = "IVRApplications_008";
 /// 新しい順に試す。IVRInput_010 と 011 の違いは 011 で末尾に関数が足されたことだけで、
 /// ここで呼ぶ関数(SetActionManifestPath 〜 OpenBindingUI)は同じ位置にある。
 pub const IVRINPUT_VERSIONS: [&str; 2] = ["IVRInput_011", "IVRInput_010"];
+/// SteamVR が終わるとき(VREvent_Quit)を知り、AcknowledgeQuit_Exiting を呼ぶためだけに使う
+pub const IVRSYSTEM_VERSION: &str = "IVRSystem_026";
 const VR_APPLICATION_TYPE_OVERLAY: i32 = 2;
 
 pub type VrOverlayHandle = u64;
@@ -70,6 +72,8 @@ pub struct Texture_t {
     pub e_color_space: EColorSpace,
 }
 
+/// SteamVR が終わる。AcknowledgeQuit_Exiting → VR_Shutdown をすぐ呼ぶ(呼ばないと数秒後にプロセスごと落とされる)
+pub const EVENT_QUIT: u32 = 700;
 pub const EVENT_MOUSE_MOVE: u32 = 300;
 pub const EVENT_MOUSE_BUTTON_DOWN: u32 = 301;
 pub const EVENT_MOUSE_BUTTON_UP: u32 = 302;
@@ -322,11 +326,73 @@ const INPUT_FN_TABLE_FIELD_COUNT: usize = 34;
 
 /// openvr_api.dll をロードし、IVROverlay の関数ポインタテーブルを保持する。
 /// `_lib` が生きている間だけ `overlay_table` は有効。
+/// `VR_IVRSystem_FnTable`(openvr_capi.h、取得日 2026-10-18、IVRSystem_026)。
+/// 呼ぶのは PollNextEvent と AcknowledgeQuit_Exiting だけ。残りは並びとサイズを保つためのプレースホルダ。
+#[repr(C)]
+pub struct VrIvSystemFnTable {
+    pub get_recommended_render_target_size: PlaceholderFn,
+    pub get_projection_matrix: PlaceholderFn,
+    pub get_projection_raw: PlaceholderFn,
+    pub compute_distortion: PlaceholderFn,
+    pub compute_distortion_set: PlaceholderFn,
+    pub get_eye_to_head_transform: PlaceholderFn,
+    pub get_time_since_last_vsync: PlaceholderFn,
+    pub get_d3d9_adapter_index: PlaceholderFn,
+    pub get_dxgi_output_info: PlaceholderFn,
+    pub get_output_device: PlaceholderFn,
+    pub is_display_on_desktop: PlaceholderFn,
+    pub set_display_visibility: PlaceholderFn,
+    pub get_device_to_absolute_tracking_pose: PlaceholderFn,
+    pub get_seated_zero_pose_to_standing_absolute_tracking_pose: PlaceholderFn,
+    pub get_raw_zero_pose_to_standing_absolute_tracking_pose: PlaceholderFn,
+    pub get_sorted_tracked_device_indices_of_class: PlaceholderFn,
+    pub get_tracked_device_activity_level: PlaceholderFn,
+    pub apply_transform: PlaceholderFn,
+    pub get_tracked_device_index_for_controller_role: PlaceholderFn,
+    pub get_controller_role_for_tracked_device_index: PlaceholderFn,
+    pub get_tracked_device_class: PlaceholderFn,
+    pub is_tracked_device_connected: PlaceholderFn,
+    pub get_bool_tracked_device_property: PlaceholderFn,
+    pub get_float_tracked_device_property: PlaceholderFn,
+    pub get_int32_tracked_device_property: PlaceholderFn,
+    pub get_uint64_tracked_device_property: PlaceholderFn,
+    pub get_matrix34_tracked_device_property: PlaceholderFn,
+    pub get_array_tracked_device_property: PlaceholderFn,
+    pub get_string_tracked_device_property: PlaceholderFn,
+    pub get_prop_error_name_from_enum: PlaceholderFn,
+    pub poll_next_event: unsafe extern "C" fn(*mut VREvent_t, u32) -> bool,
+    pub poll_next_event_with_pose: PlaceholderFn,
+    pub poll_next_event_with_pose_and_overlays: PlaceholderFn,
+    pub get_event_type_name_from_enum: PlaceholderFn,
+    pub get_hidden_area_mesh: PlaceholderFn,
+    pub get_eye_tracked_foveation_center: PlaceholderFn,
+    pub get_eye_tracked_foveation_center_for_projection: PlaceholderFn,
+    pub get_controller_state: PlaceholderFn,
+    pub get_controller_state_with_pose: PlaceholderFn,
+    pub trigger_haptic_pulse: PlaceholderFn,
+    pub get_button_id_name_from_enum: PlaceholderFn,
+    pub get_controller_axis_type_name_from_enum: PlaceholderFn,
+    pub is_input_available: PlaceholderFn,
+    pub is_steam_vrdrawing_controllers: PlaceholderFn,
+    pub should_application_pause: PlaceholderFn,
+    pub should_application_reduce_rendering_work: PlaceholderFn,
+    pub perform_firmware_update: PlaceholderFn,
+    pub acknowledge_quit_exiting: unsafe extern "C" fn(),
+    pub get_app_container_file_paths: PlaceholderFn,
+    pub get_runtime_version: PlaceholderFn,
+    pub set_sdkversion: PlaceholderFn,
+}
+
+/// `VR_IVRSystem_FnTable` の総フィールド数(公式ヘッダより)
+#[cfg(test)]
+const SYSTEM_FN_TABLE_FIELD_COUNT: usize = 51;
+
 pub struct OpenVrLibrary {
     _lib: Library,
     overlay_table: *const VrIvOverlayFnTable,
     applications_table: Option<*const VrIvApplicationsFnTable>,
     input_table: Option<*const VrIvInputFnTable>,
+    system_table: Option<*const VrIvSystemFnTable>,
 }
 
 impl OpenVrLibrary {
@@ -344,20 +410,28 @@ impl OpenVrLibrary {
         if init_error != 0 || token == 0 {
             return Err(format!("VR_InitInternal エラー: code={}", init_error));
         }
+        // ここから先で失敗したら、つないだままにせず VR_Shutdown してから返す
+        let shutdown_on_error = |e: String| -> String {
+            if let Ok(f) = unsafe { lib.get::<unsafe extern "C" fn()>(b"VR_ShutdownInternal\0") } {
+                unsafe { f() };
+            }
+            e
+        };
 
         let vr_get_generic_interface: libloading::Symbol<
             unsafe extern "C" fn(*const c_char, *mut EVRInitError) -> isize,
-        > = unsafe { lib.get(b"VR_GetGenericInterface\0") }
-            .map_err(|e| format!("VR_GetGenericInterface が見つからない: {}", e))?;
+        > = unsafe { lib.get(b"VR_GetGenericInterface\0") }.map_err(|e| {
+            shutdown_on_error(format!("VR_GetGenericInterface が見つからない: {}", e))
+        })?;
 
         let version = std::ffi::CString::new(format!("FnTable:{}", IVROVERLAY_VERSION)).unwrap();
         let mut iface_error: EVRInitError = 0;
         let table_ptr = unsafe { vr_get_generic_interface(version.as_ptr(), &mut iface_error) };
         if iface_error != 0 || table_ptr == 0 {
-            return Err(format!(
+            return Err(shutdown_on_error(format!(
                 "IVROverlay インターフェース取得失敗: code={}",
                 iface_error
-            ));
+            )));
         }
 
         // IVRApplications は自動起動登録(SteamVR起動時にこのexeを立ち上げてもらう)のためだけに
@@ -392,11 +466,27 @@ impl OpenVrLibrary {
             eprintln!("[SteamVR] {} インターフェース取得失敗: code={}", v, err);
         }
 
+        // IVRSystem は SteamVR の終了(VREvent_Quit)を知るためだけに使う。取れなくても
+        // vrserver.exe の有無の見張りで気づけるので non-fatal
+        let system_name = std::ffi::CString::new(format!("FnTable:{}", IVRSYSTEM_VERSION)).unwrap();
+        let mut system_err: EVRInitError = 0;
+        let system_ptr = unsafe { vr_get_generic_interface(system_name.as_ptr(), &mut system_err) };
+        let system_table = if system_err == 0 && system_ptr != 0 {
+            Some(system_ptr as *const VrIvSystemFnTable)
+        } else {
+            eprintln!(
+                "[SteamVR] {} インターフェース取得失敗: code={}",
+                IVRSYSTEM_VERSION, system_err
+            );
+            None
+        };
+
         Ok(Self {
             _lib: lib,
             overlay_table: table_ptr as *const VrIvOverlayFnTable,
             applications_table,
             input_table,
+            system_table,
         })
     }
 
@@ -410,6 +500,10 @@ impl OpenVrLibrary {
 
     pub fn input(&self) -> Option<&VrIvInputFnTable> {
         self.input_table.map(|ptr| unsafe { &*ptr })
+    }
+
+    pub fn system(&self) -> Option<&VrIvSystemFnTable> {
+        self.system_table.map(|ptr| unsafe { &*ptr })
     }
 }
 
@@ -442,6 +536,24 @@ mod tests {
             std::mem::size_of::<VrIvApplicationsFnTable>(),
             APPLICATIONS_FN_TABLE_FIELD_COUNT * std::mem::size_of::<usize>(),
             "VR_IVRApplications_FnTable のフィールド数が公式ヘッダと食い違っている可能性がある"
+        );
+    }
+
+    #[test]
+    fn test_system_fn_table_field_count_matches_official_header() {
+        assert_eq!(
+            std::mem::size_of::<VrIvSystemFnTable>(),
+            SYSTEM_FN_TABLE_FIELD_COUNT * std::mem::size_of::<usize>(),
+            "VR_IVRSystem_FnTable のフィールド数が公式ヘッダと食い違っている可能性がある"
+        );
+        // PollNextEvent は 31 番目、AcknowledgeQuit_Exiting は 48 番目(0 始まりで 30 と 47)
+        assert_eq!(
+            std::mem::offset_of!(VrIvSystemFnTable, poll_next_event),
+            30 * std::mem::size_of::<usize>()
+        );
+        assert_eq!(
+            std::mem::offset_of!(VrIvSystemFnTable, acknowledge_quit_exiting),
+            47 * std::mem::size_of::<usize>()
         );
     }
 

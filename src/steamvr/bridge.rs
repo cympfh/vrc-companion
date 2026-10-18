@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::config::Config;
@@ -148,10 +150,18 @@ pub struct OverlayHandle {
     pub snapshot_tx: Sender<OverlaySnapshot>,
     pub action_rx: Receiver<OverlayAction>,
     pub command_tx: Sender<OverlayCommand>,
+    /// いま SteamVR につながっているか(オーバーレイのスレッドが更新する)
+    pub connected: Arc<AtomicBool>,
 }
 
-/// SteamVR オーバーレイ描画スレッドを起動する。SteamVR未起動・DLL不在などは
-/// 非致命的に扱い None を返す（呼び出し側は他機能に影響させない）。
+impl OverlayHandle {
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::SeqCst)
+    }
+}
+
+/// SteamVR オーバーレイのスレッドを起動する(Windows では常に Some、それ以外は None)。
+/// SteamVR が動いていなくてもよい: スレッドが SteamVR の起動を待ち、来たらつなぐ(`is_connected`)。
 /// `width_m` はオーバーレイの表示幅(メートル、Config の `steamvr_overlay_width_m`)。
 #[cfg(windows)]
 pub fn start(initial: OverlaySnapshot, width_m: f32) -> Option<OverlayHandle> {

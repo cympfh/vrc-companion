@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 録音の開始/終了を VR の中にトーストで表示（目の前の少し下に約2秒。ダッシュボードを閉じていても見える）
 - VR の中のオーバーレイと Settings に「キー割り当て変更」ボタン: SteamVR の割り当て画面を開く（オーバーレイからは VR の中、Settings からは PC の画面）
 
+### Fixed
+
+- SteamVR を終了すると、数秒後にこのアプリが落ちていた。SteamVR の終了の知らせを受けて切断し、アプリはそのまま動き続けるように
+- SteamVR より先にアプリを起動すると、VR の表示がずっと出なかった（そのうえ SteamVR を起動してしまうことがあった）。SteamVR の起動を待ち、起動したら自動でつなぐように。このアプリが SteamVR を起動することはない
+
 ### Removed
 
 - VRChat の OSC でミュート2回を受け取って録音を始める仕組み（ポート 9001 の受信）。上のボタン割り当てで置き換え。VRChat のチャットボックスへの送信（OSC、ポート 9000）はこれまでどおり

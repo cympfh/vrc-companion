@@ -3,9 +3,15 @@
 //!
 //! `render::GlOverlayRenderer` が毎tick描画したegui UIのGLテクスチャを `SetOverlayTexture`
 //! でSteamVRコンポジタに渡す。WGLコンテキストはスレッドアフィニティを持つため、
-//! renderer の生成・描画・破棄は全てこの `run` 関数を実行するスレッド上で行う。
+//! renderer の生成・描画・破棄は全てこのスレッド(`supervise`)の上で行う。
+//!
+//! SteamVR を起動してしまわないよう、vrserver.exe が動いているときだけ `VR_Init` する
+//! (`runtime_watch`)。SteamVR が終わったら(VREvent_Quit、または vrserver.exe が居なくなったら)
+//! OpenVR を呼ぶのをやめて切断し、また起動したらオーバーレイなどを作り直す。
 
 use std::ffi::{CString, c_char, c_void};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -15,6 +21,7 @@ use super::input_manifest::{self, InputAction};
 use super::manifest;
 use super::overlay_ui::{LOGICAL_H, LOGICAL_W, PIXELS_PER_POINT};
 use super::render::GlOverlayRenderer;
+use super::runtime_watch::{self, SessionEnd, StatusLog};
 use super::toast_ui::{self, ToastKind};
 
 const OVERLAY_NAME: &str = "VRC Companion";
@@ -26,34 +33,124 @@ pub fn start(initial: OverlaySnapshot, width_m: f32) -> Option<OverlayHandle> {
     let (snapshot_tx, snapshot_rx) = mpsc::channel::<OverlaySnapshot>();
     let (action_tx, action_rx) = mpsc::channel::<OverlayAction>();
     let (command_tx, command_rx) = mpsc::channel::<OverlayCommand>();
+    let connected = Arc::new(AtomicBool::new(false));
 
-    std::thread::spawn(move || run(initial, width_m, snapshot_rx, action_tx, command_rx));
+    let flag = connected.clone();
+    std::thread::spawn(move || {
+        supervise(initial, width_m, snapshot_rx, action_tx, command_rx, flag)
+    });
 
     Some(OverlayHandle {
         snapshot_tx,
         action_rx,
         command_tx,
+        connected,
     })
 }
 
-fn run(
+/// SteamVR が動いているときだけつなぐ。SteamVR が終わったら切断して待ち、また来たらつなぎ直す。
+/// アプリ本体(デスクトップ GUI)は SteamVR の有無に関係なく動き続ける。
+fn supervise(
     initial: OverlaySnapshot,
     width_m: f32,
     snapshot_rx: Receiver<OverlaySnapshot>,
     action_tx: Sender<OverlayAction>,
     command_rx: Receiver<OverlayCommand>,
+    connected: Arc<AtomicBool>,
 ) {
-    let lib = match OpenVrLibrary::load() {
-        Ok(lib) => lib,
-        Err(e) => {
-            eprintln!(
-                "[SteamVR] 初期化失敗 (SteamVR未起動、またはopenvr_api.dllが見つからない): {}",
-                e
-            );
+    let mut latest = initial;
+    let mut status = StatusLog::default();
+    loop {
+        // SteamVR が動いていないときに VR_Init すると SteamVR が起動してしまうので、先に確かめる
+        if !runtime_watch::steamvr_running() {
+            status.log("SteamVR の起動を待っています(起動したら自動でつなぐ)");
+        } else {
+            match OpenVrLibrary::load() {
+                Err(e) => status.log(&format!(
+                    "つなげなかった({}秒後にやり直す): {}",
+                    runtime_watch::RETRY_EVERY.as_secs(),
+                    e
+                )),
+                Ok(lib) => {
+                    status.log("SteamVR につないだ");
+                    connected.store(true, Ordering::SeqCst);
+                    let end = run_session(
+                        &lib,
+                        width_m,
+                        &mut latest,
+                        &snapshot_rx,
+                        &action_tx,
+                        &command_rx,
+                    );
+                    connected.store(false, Ordering::SeqCst);
+                    // オーバーレイ・レンダラ・入力は run_session の中で片付いている。ここで VR_Shutdown
+                    drop(lib);
+                    if end == SessionEnd::AppClosed {
+                        return;
+                    }
+                    status.log(&end.message());
+                }
+            }
+        }
+        if !wait_while_disconnected(&snapshot_rx, &command_rx, &mut latest) {
             return;
         }
-    };
+    }
+}
 
+/// つながっていない間、`RETRY_EVERY` だけ待つ。その間もアプリからのスナップショットは受け取って
+/// 最新を保ち、設定画面の頼みごとは捨てる。アプリが閉じたら false
+fn wait_while_disconnected(
+    snapshot_rx: &Receiver<OverlaySnapshot>,
+    command_rx: &Receiver<OverlayCommand>,
+    latest: &mut OverlaySnapshot,
+) -> bool {
+    let until = Instant::now() + runtime_watch::RETRY_EVERY;
+    loop {
+        let now = Instant::now();
+        if now >= until {
+            return true;
+        }
+        match snapshot_rx.recv_timeout(until - now) {
+            Ok(s) => *latest = s,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+        }
+        while command_rx.try_recv().is_ok() {}
+    }
+}
+
+/// SteamVR が終了を知らせてきたか(IVRSystem のイベントを空になるまで読む)
+fn quit_requested(lib: &OpenVrLibrary) -> bool {
+    let Some(system) = lib.system() else {
+        return false;
+    };
+    let mut quit = false;
+    loop {
+        let mut event: ffi::VREvent_t = unsafe { std::mem::zeroed() };
+        let has = unsafe {
+            (system.poll_next_event)(&mut event, std::mem::size_of::<ffi::VREvent_t>() as u32)
+        };
+        if !has {
+            break;
+        }
+        if event.event_type == ffi::EVENT_QUIT {
+            quit = true;
+        }
+    }
+    quit
+}
+
+/// SteamVR につながっている間の1回分。オーバーレイ(タブとトースト)・入力・自動起動の登録を
+/// すべてここで作り、抜けるときにレンダラなどは drop される(オーバーレイ自体は VR_Shutdown で消える)
+fn run_session(
+    lib: &OpenVrLibrary,
+    width_m: f32,
+    latest: &mut OverlaySnapshot,
+    snapshot_rx: &Receiver<OverlaySnapshot>,
+    action_tx: &Sender<OverlayAction>,
+    command_rx: &Receiver<OverlayCommand>,
+) -> SessionEnd {
     // SteamVR Input(ボタン割り当て)用のファイルを先に書く。vrmanifest に場所を書き込むため
     let action_manifest = match input_manifest::default_input_dir()
         .and_then(|dir| input_manifest::write_input_files(&dir))
@@ -68,52 +165,46 @@ fn run(
         }
     };
 
-    ensure_auto_launch_registered(&lib, action_manifest.as_deref());
+    ensure_auto_launch_registered(lib, action_manifest.as_deref());
 
     // SetActionManifestPath は最初の PollNextEvent より前に呼ぶ必要がある(openvr.h)ので、
     // オーバーレイのイベントを読み始める前にここで初期化する
     let mut input = action_manifest
         .as_deref()
-        .and_then(|path| SteamVrInput::init(&lib, path));
+        .and_then(|path| SteamVrInput::init(lib, path));
 
-    let overlay_handle = match create_dashboard_overlay(&lib) {
+    let overlay_handle = match create_dashboard_overlay(lib) {
         Ok(h) => h,
-        Err(e) => {
-            eprintln!("[SteamVR] CreateDashboardOverlay 失敗: {}", e);
-            return;
-        }
+        Err(e) => return SessionEnd::Failed(format!("CreateDashboardOverlay: {}", e)),
     };
 
-    if let Err(e) = show_overlay(&lib, overlay_handle) {
+    if let Err(e) = show_overlay(lib, overlay_handle) {
         eprintln!("[SteamVR] ShowOverlay 失敗: {}", e);
     }
 
     // SetOverlayInputMethod を呼ばない限りコンポジタはこのオーバーレイに対して
     // MouseMove/MouseButtonDown/Up を一切生成しない(デフォルトはInputMethod_None)。
     // これが無いと表示だけされてレーザーポインタ操作が効かない。
-    if let Err(e) = set_overlay_input_method(&lib, overlay_handle) {
+    if let Err(e) = set_overlay_input_method(lib, overlay_handle) {
         eprintln!("[SteamVR] SetOverlayInputMethod 失敗: {}", e);
     }
     // マウス座標は UI の論理ピクセルで受け取る(テクスチャは PIXELS_PER_POINT 倍の解像度)
-    if let Err(e) = set_overlay_mouse_scale(&lib, overlay_handle, LOGICAL_W, LOGICAL_H) {
+    if let Err(e) = set_overlay_mouse_scale(lib, overlay_handle, LOGICAL_W, LOGICAL_H) {
         eprintln!("[SteamVR] SetOverlayMouseScale 失敗: {}", e);
     }
     // 表示の大きさ(幅)。呼ばないと SteamVR の既定の 1m になり、小さくて読みにくかった
-    if let Err(e) = set_overlay_width_in_meters(&lib, overlay_handle, width_m) {
+    if let Err(e) = set_overlay_width_in_meters(lib, overlay_handle, width_m) {
         eprintln!("[SteamVR] SetOverlayWidthInMeters 失敗: {}", e);
     }
 
     let mut renderer = match GlOverlayRenderer::new(OVERLAY_WIDTH, OVERLAY_HEIGHT, PIXELS_PER_POINT)
     {
         Ok(r) => r,
-        Err(e) => {
-            eprintln!("[SteamVR] GlOverlayRenderer 初期化失敗: {}", e);
-            return;
-        }
+        Err(e) => return SessionEnd::Failed(format!("GlOverlayRenderer: {}", e)),
     };
 
     // 録音の開始/終了のトースト(頭に固定した別オーバーレイ)。作れなくても本体は動かす
-    let mut toast = match Toast::create(&lib) {
+    let mut toast = match Toast::create(lib) {
         Ok(t) => Some(t),
         Err(e) => {
             eprintln!("[SteamVR] トースト用オーバーレイを作れなかった: {}", e);
@@ -121,35 +212,51 @@ fn run(
         }
     };
 
-    let mut latest = initial;
     let mut was_recording = latest.is_recording;
+    let mut last_alive_check = Instant::now();
     loop {
         // WaitFrameSync でコンポジタの次フレームに同期する(固定インターバルの
         // recv_timeoutによるポーリングではなく、コンポジタ側のペースに揃える)。
         // タイムアウトしても(戻り値がエラーでも)描画自体は続ける — SteamVRが
         // 一時的にフレームを配れない状況(例: ダッシュボード非表示中)でも
         // オーバーレイの更新を止めたくないため。
-        if let Err(e) = wait_frame_sync(&lib, 100) {
+        if let Err(e) = wait_frame_sync(lib, 100) {
             eprintln!("[SteamVR] WaitFrameSync 失敗: {}", e);
         }
 
+        // SteamVR が終わるなら、ほかの OpenVR 呼び出しより先に気づいて抜ける
+        if quit_requested(lib) {
+            // 終了の知らせを受け取ったと伝え、すぐ VR_Shutdown する(呼び出し元で lib を drop)。
+            // プロセスは終わらなくてよい(SteamVR が気にするのは vrclient がつながったままかどうか)
+            if let Some(system) = lib.system() {
+                unsafe { (system.acknowledge_quit_exiting)() };
+            }
+            return SessionEnd::SteamVrQuit;
+        }
+        if last_alive_check.elapsed() >= runtime_watch::ALIVE_CHECK_EVERY {
+            last_alive_check = Instant::now();
+            if !runtime_watch::steamvr_running() {
+                return SessionEnd::SteamVrGone;
+            }
+        }
+
         match snapshot_rx.try_recv() {
-            Ok(s) => latest = s,
+            Ok(s) => *latest = s,
             Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => break,
+            Err(mpsc::TryRecvError::Disconnected) => return SessionEnd::AppClosed,
         }
 
         if let Some(t) = toast.as_mut() {
             if let Some(kind) = ToastKind::from_transition(was_recording, latest.is_recording) {
-                t.show(&lib, kind);
+                t.show(lib, kind);
             }
-            t.tick(&lib);
+            t.tick(lib);
         }
         was_recording = latest.is_recording;
 
         // SteamVR のバインドで割り当てられたボタン操作(VRChat を操作中でも届く)
         if let Some(input) = input.as_mut() {
-            for action in input.poll(&lib) {
+            for action in input.poll(lib) {
                 let _ = action_tx.send(OverlayAction::from_input(action));
             }
         }
@@ -158,7 +265,7 @@ fn run(
         while let Ok(cmd) = command_rx.try_recv() {
             match cmd {
                 OverlayCommand::OpenBindingUi => match input.as_ref() {
-                    Some(i) => i.open_binding_ui(&lib, true),
+                    Some(i) => i.open_binding_ui(lib, true),
                     None => {
                         eprintln!("[SteamVR] SteamVR Input が使えないので割り当て画面を開けない")
                     }
@@ -166,11 +273,11 @@ fn run(
             }
         }
 
-        let events = poll_overlay_events(&lib, overlay_handle);
-        match renderer.render(&latest, events) {
+        let events = poll_overlay_events(lib, overlay_handle);
+        match renderer.render(latest, events) {
             Ok((texture, actions)) => {
                 if !actions.is_empty() {
-                    if let Err(e) = trigger_laser_mouse_haptic_vibration(&lib, overlay_handle) {
+                    if let Err(e) = trigger_laser_mouse_haptic_vibration(lib, overlay_handle) {
                         eprintln!("[SteamVR] TriggerLaserMouseHapticVibration 失敗: {}", e);
                     }
                 }
@@ -178,7 +285,7 @@ fn run(
                     if action == OverlayAction::OpenBindingUi {
                         // VR の中(ダッシュボード)で SteamVR の割り当て画面を開く
                         match input.as_ref() {
-                            Some(i) => i.open_binding_ui(&lib, false),
+                            Some(i) => i.open_binding_ui(lib, false),
                             None => eprintln!(
                                 "[SteamVR] SteamVR Input が使えないので割り当て画面を開けない"
                             ),
@@ -192,7 +299,7 @@ fn run(
                     e_type: ffi::TEXTURE_TYPE_OPENGL,
                     e_color_space: ffi::COLOR_SPACE_AUTO,
                 };
-                if let Err(e) = set_overlay_texture(&lib, overlay_handle, &mut tex) {
+                if let Err(e) = set_overlay_texture(lib, overlay_handle, &mut tex) {
                     eprintln!("[SteamVR] SetOverlayTexture 失敗: {}", e);
                 }
             }

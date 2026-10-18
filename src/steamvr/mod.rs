@@ -10,6 +10,8 @@ mod manifest;
 mod overlay_ui;
 #[cfg(windows)]
 mod render;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod runtime_watch;
 #[cfg(windows)]
 mod session;
 #[cfg_attr(not(windows), allow(dead_code))]

@@ -278,7 +278,7 @@ impl App {
 
     /// SteamVR が動いているときだけ「キー割り当て変更」(SteamVR の割り当て画面を PC の画面に開く)
     fn steamvr_bindings_button(&self, ui: &mut egui::Ui) {
-        let Some(overlay) = self.steamvr_overlay.as_ref() else {
+        let Some(overlay) = self.steamvr_overlay.as_ref().filter(|o| o.is_connected()) else {
             return;
         };
         ui.add_space(10.0);
@@ -367,8 +367,10 @@ impl eframe::App for App {
         // オーバーレイでクリックしてもConfig反映・スナップショット再送が止まってしまい、
         // オーバーレイ側では古いスナップショットで再描画され続けてチェックが一瞬で戻る。
         // これを避けるため、オーバーレイが有効な間は一定周期で強制的にrepaintさせる。
-        if self.steamvr_overlay.is_some() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        // SteamVR につながっていない間はゆっくり(つながったら1秒以内に気づいて速くなる)。
+        if let Some(overlay) = &self.steamvr_overlay {
+            let every = if overlay.is_connected() { 100 } else { 1000 };
+            ctx.request_repaint_after(std::time::Duration::from_millis(every));
         }
 
         if let Some(ref receiver) = self.eliza_response_receiver
