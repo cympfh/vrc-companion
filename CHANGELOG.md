@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - コントローラーのボタンで操作できるように（SteamVR のボタン割り当て機能）。VRChat を操作中でも効く。割り当てられる操作は「録音を開始」「録音の開始/停止」「QvPen を呼ぶ」。1回押し・2回押し・長押しなど押し方も選べる
-- 既定の割り当て: VRChat のマイクボタンを2回押すと「録音を開始」（Steam Frame は左の十字キー下、Index は左 A、Quest は左 X）
+- 既定の割り当て: 左の十字キー下（Steam Frame）、左 A（Index）、左 X（Quest）を2回押すと「録音を開始」。「録音の開始/停止」「QvPen を呼ぶ」は割り当てなし。SteamVR の割り当て画面で変えた場合はそちらが使われる
 - 録音の開始/終了を VR の中にトーストで表示（目の前の少し下に約2秒。ダッシュボードを閉じていても見える）
 - VR の中のオーバーレイと Settings に「キー割り当て変更」ボタン: SteamVR の割り当て画面を開く（オーバーレイからは VR の中、Settings からは PC の画面）
 
