@@ -2,7 +2,9 @@
 //!
 //! このアプリが SteamVR を起動してしまわないよう、`VR_Init` は vrserver.exe が動いているときだけ
 //! 呼ぶ(SteamVR が動いていないときに Overlay として `VR_Init` すると、SteamVR が起動してしまう)。
-//! 動いていなければ数秒おきに見に行き、SteamVR が来たらつなぎ直す。
+//! 動いていなければ数秒おきに見に行き、SteamVR が来たらつなぐ。
+//! つないだあとに SteamVR が終わったら(終了の知らせ、または vrserver.exe が居なくなったら)、
+//! アプリごと終了する。
 //! 判定の部分は描画先に依存しないので全OSでテストできる。
 
 use std::time::Duration;
@@ -18,6 +20,17 @@ pub fn is_steamvr_server(process_name: &str) -> bool {
     process_name.eq_ignore_ascii_case(STEAMVR_SERVER_EXE)
 }
 
+/// 接続が終わったあとにすること
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterSession {
+    /// アプリ(デスクトップの画面も)を終了する
+    ExitApp,
+    /// SteamVR はまだ動いているので、少し待ってつなぎ直す
+    Retry,
+    /// アプリがもう閉じている。見張りのスレッドも終わる
+    ThreadDone,
+}
+
 /// つながっていた SteamVR との接続が終わった理由
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionEnd {
@@ -28,31 +41,33 @@ pub enum SessionEnd {
     /// 知らせなしに vrserver.exe が居なくなった(落ちた・強制終了など)
     SteamVrGone,
     /// このアプリの別のコピーがもう SteamVR にタブを出している(例: 手で起動したあとに
-    /// SteamVR の自動起動でもう1つ起動された)。このコピーは VR につなぐのをやめる
+    /// SteamVR の自動起動でもう1つ起動された)。このコピーは終了する
     AnotherInstance,
     /// つないだあとの準備(オーバーレイ作成など)に失敗した
     Failed(String),
 }
 
 impl SessionEnd {
-    /// これで終わり(つなぎ直さない)か
-    pub fn stops_retrying(&self) -> bool {
-        matches!(self, SessionEnd::AppClosed | SessionEnd::AnotherInstance)
+    pub fn after(&self) -> AfterSession {
+        match self {
+            SessionEnd::AppClosed => AfterSession::ThreadDone,
+            SessionEnd::SteamVrQuit | SessionEnd::SteamVrGone | SessionEnd::AnotherInstance => {
+                AfterSession::ExitApp
+            }
+            SessionEnd::Failed(_) => AfterSession::Retry,
+        }
     }
 
     pub fn message(&self) -> String {
         match self {
             SessionEnd::AppClosed => "アプリを閉じる".to_string(),
             SessionEnd::AnotherInstance => {
-                "このアプリの別のコピーがもう SteamVR につないでいるので、こちらは VR につながない"
+                "このアプリの別のコピーがもう SteamVR につないでいるので、こちらは終了する"
                     .to_string()
             }
-            SessionEnd::SteamVrQuit => {
-                "SteamVR が終了したので切断した。SteamVR が起動したらつなぎ直す".to_string()
-            }
+            SessionEnd::SteamVrQuit => "SteamVR が終了したので、アプリも終了する".to_string(),
             SessionEnd::SteamVrGone => {
-                "SteamVR(vrserver.exe)が居なくなったので切断した。SteamVR が起動したらつなぎ直す"
-                    .to_string()
+                "SteamVR(vrserver.exe)が居なくなったので、アプリも終了する".to_string()
             }
             SessionEnd::Failed(e) => format!(
                 "準備に失敗したので切断した({}秒後にやり直す): {}",
@@ -146,8 +161,9 @@ mod tests {
 
     #[test]
     fn session_end_messages_say_what_happens_next() {
-        assert!(SessionEnd::SteamVrQuit.message().contains("つなぎ直す"));
-        assert!(SessionEnd::SteamVrGone.message().contains("つなぎ直す"));
+        assert!(SessionEnd::SteamVrQuit.message().contains("終了する"));
+        assert!(SessionEnd::SteamVrGone.message().contains("終了する"));
+        assert!(SessionEnd::AnotherInstance.message().contains("終了する"));
         assert!(
             SessionEnd::Failed("x".into())
                 .message()
@@ -156,12 +172,15 @@ mod tests {
     }
 
     #[test]
-    fn only_app_exit_and_duplicate_stop_retrying() {
-        assert!(SessionEnd::AppClosed.stops_retrying());
-        assert!(SessionEnd::AnotherInstance.stops_retrying());
-        assert!(!SessionEnd::SteamVrQuit.stops_retrying());
-        assert!(!SessionEnd::SteamVrGone.stops_retrying());
-        assert!(!SessionEnd::Failed("x".into()).stops_retrying());
+    fn steamvr_ending_exits_the_app_but_setup_failure_retries() {
+        // SteamVR が終わったら(知らせあり・なし)アプリも終了。重複したコピーも終了
+        assert_eq!(SessionEnd::SteamVrQuit.after(), AfterSession::ExitApp);
+        assert_eq!(SessionEnd::SteamVrGone.after(), AfterSession::ExitApp);
+        assert_eq!(SessionEnd::AnotherInstance.after(), AfterSession::ExitApp);
+        // SteamVR は動いたままの準備失敗はつなぎ直す
+        assert_eq!(SessionEnd::Failed("x".into()).after(), AfterSession::Retry);
+        // アプリがもう閉じているなら見張りも終わるだけ
+        assert_eq!(SessionEnd::AppClosed.after(), AfterSession::ThreadDone);
     }
 
     #[test]

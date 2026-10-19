@@ -51,7 +51,7 @@ fn main() -> eframe::Result<()> {
                 .insert(0, "japanese".to_owned());
             cc.egui_ctx.set_fonts(fonts);
 
-            Ok(Box::new(App::new(config)))
+            Ok(Box::new(App::new(config, cc.egui_ctx.clone())))
         }),
     )
 }
@@ -90,7 +90,7 @@ struct App {
 }
 
 impl App {
-    fn new(config: Config) -> Self {
+    fn new(config: Config, egui_ctx: egui::Context) -> Self {
         let mut available_devices = audio::get_input_devices().unwrap_or_else(|e| {
             eprintln!("Failed to get input devices: {}", e);
             vec![]
@@ -106,6 +106,7 @@ impl App {
         let steamvr_overlay = steamvr::start(
             OverlaySnapshot::from_config(&config, false, "", "", ""),
             config.steamvr_overlay_width_m,
+            egui_ctx,
         );
 
         Self {
@@ -166,6 +167,25 @@ impl App {
         } else {
             "Recording stopped.".to_string()
         };
+    }
+
+    /// SteamVR が終わってアプリごと閉じるとき。録音を止め(文字起こしの結果は待たない)、
+    /// ログを書き切ってからウィンドウを閉じる
+    fn exit_with_steamvr(&mut self, ctx: &egui::Context) {
+        eprintln!("[App] SteamVR が終わったので終了する");
+        if let Some(mut recorder) = self.audio_recorder.take() {
+            recorder.stop_recording();
+        }
+        self.is_recording = false;
+        self.transcription_receiver = None;
+        if let Some(rt) = self.tokio_runtime.take() {
+            // 文字起こしの通信の終わりを待たずに閉じる(UI スレッドを止めない)
+            rt.shutdown_background();
+        }
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     fn start_streaming_transcription(
@@ -366,11 +386,16 @@ impl eframe::App for App {
         // デスクトップウィンドウを見ていない間(VR内での操作中はまさにこの状態)は
         // オーバーレイでクリックしてもConfig反映・スナップショット再送が止まってしまい、
         // オーバーレイ側では古いスナップショットで再描画され続けてチェックが一瞬で戻る。
-        // これを避けるため、オーバーレイが有効な間は一定周期で強制的にrepaintさせる。
-        // SteamVR につながっていない間はゆっくり(つながったら1秒以内に気づいて速くなる)。
+        // これを避けるため、SteamVR につながっている間は一定周期で強制的にrepaintさせる。
+        // つながった・終了してほしい、はオーバーレイのスレッドが request_repaint で知らせてくる。
         if let Some(overlay) = &self.steamvr_overlay {
-            let every = if overlay.is_connected() { 100 } else { 1000 };
-            ctx.request_repaint_after(std::time::Duration::from_millis(every));
+            if overlay.exit_requested() {
+                self.exit_with_steamvr(ctx);
+                return;
+            }
+            if overlay.is_connected() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
         }
 
         if let Some(ref receiver) = self.eliza_response_receiver

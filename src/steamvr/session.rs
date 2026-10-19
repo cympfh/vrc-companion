@@ -21,7 +21,7 @@ use super::input_manifest::{self, InputAction};
 use super::manifest;
 use super::overlay_ui::{LOGICAL_H, LOGICAL_W, PIXELS_PER_POINT};
 use super::render::GlOverlayRenderer;
-use super::runtime_watch::{self, SessionEnd, StatusLog};
+use super::runtime_watch::{self, AfterSession, SessionEnd, StatusLog};
 use super::toast_ui::{self, ToastKind};
 
 const OVERLAY_NAME: &str = "VRC Companion";
@@ -29,15 +29,24 @@ const OVERLAY_NAME: &str = "VRC Companion";
 pub(super) const OVERLAY_WIDTH: u32 = (LOGICAL_W * PIXELS_PER_POINT) as u32;
 pub(super) const OVERLAY_HEIGHT: u32 = (LOGICAL_H * PIXELS_PER_POINT) as u32;
 
-pub fn start(initial: OverlaySnapshot, width_m: f32) -> Option<OverlayHandle> {
+pub fn start(
+    initial: OverlaySnapshot,
+    width_m: f32,
+    egui_ctx: egui::Context,
+) -> Option<OverlayHandle> {
     let (snapshot_tx, snapshot_rx) = mpsc::channel::<OverlaySnapshot>();
     let (action_tx, action_rx) = mpsc::channel::<OverlayAction>();
     let (command_tx, command_rx) = mpsc::channel::<OverlayCommand>();
-    let connected = Arc::new(AtomicBool::new(false));
+    let flags = SessionFlags {
+        connected: Arc::new(AtomicBool::new(false)),
+        exit_requested: Arc::new(AtomicBool::new(false)),
+        egui_ctx,
+    };
+    let connected = flags.connected.clone();
+    let exit_requested = flags.exit_requested.clone();
 
-    let flag = connected.clone();
     std::thread::spawn(move || {
-        supervise(initial, width_m, snapshot_rx, action_tx, command_rx, flag)
+        supervise(initial, width_m, snapshot_rx, action_tx, command_rx, flags)
     });
 
     Some(OverlayHandle {
@@ -45,18 +54,39 @@ pub fn start(initial: OverlaySnapshot, width_m: f32) -> Option<OverlayHandle> {
         action_rx,
         command_tx,
         connected,
+        exit_requested,
     })
 }
 
-/// SteamVR が動いているときだけつなぐ。SteamVR が終わったら切断して待ち、また来たらつなぎ直す。
-/// アプリ本体(デスクトップ GUI)は SteamVR の有無に関係なく動き続ける。
+/// 見張りのスレッドからアプリ(デスクトップ GUI)へ知らせるもの
+struct SessionFlags {
+    connected: Arc<AtomicBool>,
+    exit_requested: Arc<AtomicBool>,
+    /// 知らせたらすぐ画面の update() が回るように
+    egui_ctx: egui::Context,
+}
+
+impl SessionFlags {
+    fn set_connected(&self, on: bool) {
+        self.connected.store(on, Ordering::SeqCst);
+        self.egui_ctx.request_repaint();
+    }
+
+    fn request_app_exit(&self) {
+        self.exit_requested.store(true, Ordering::SeqCst);
+        self.egui_ctx.request_repaint();
+    }
+}
+
+/// SteamVR が動いているときだけつなぐ(動いていなければ起動を待つ。SteamVR を起動することはない)。
+/// つないだあとに SteamVR が終わったら、切断してからアプリに終了を頼む。
 fn supervise(
     initial: OverlaySnapshot,
     width_m: f32,
     snapshot_rx: Receiver<OverlaySnapshot>,
     action_tx: Sender<OverlayAction>,
     command_rx: Receiver<OverlayCommand>,
-    connected: Arc<AtomicBool>,
+    flags: SessionFlags,
 ) {
     let mut latest = initial;
     let mut status = StatusLog::default();
@@ -73,7 +103,7 @@ fn supervise(
                 )),
                 Ok(lib) => {
                     status.log("SteamVR につないだ");
-                    connected.store(true, Ordering::SeqCst);
+                    flags.set_connected(true);
                     let end = run_session(
                         &lib,
                         width_m,
@@ -82,12 +112,18 @@ fn supervise(
                         &action_tx,
                         &command_rx,
                     );
-                    connected.store(false, Ordering::SeqCst);
+                    flags.set_connected(false);
                     // オーバーレイ・レンダラ・入力は run_session の中で片付いている。ここで VR_Shutdown
+                    // (アプリに終了を頼むのは切断が済んでから)
                     drop(lib);
                     status.log(&end.message());
-                    if end.stops_retrying() {
-                        return;
+                    match end.after() {
+                        AfterSession::ExitApp => {
+                            flags.request_app_exit();
+                            return;
+                        }
+                        AfterSession::ThreadDone => return,
+                        AfterSession::Retry => {}
                     }
                 }
             }

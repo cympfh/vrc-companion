@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-19
+
+### Changed
+
+- SteamVR を終了したら（または SteamVR が落ちたら）、このアプリも一緒に終了するように（デスクトップのウィンドウも閉じる）。録音中だった場合は録音を止めてから終了する
+- SteamVR より先にアプリを起動したときは、これまでどおり SteamVR の起動を待ち、起動したら自動でつなぐ。このアプリが SteamVR を起動することはない
+- 同じアプリがもう SteamVR につながっているときに2つ目を起動すると、2つ目は終了する
+
 ## [0.5.0] - 2026-10-18
 
 ### Added
