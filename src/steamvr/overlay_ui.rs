@@ -56,6 +56,13 @@ pub fn setup_style(ctx: &egui::Context) {
     style.visuals.override_text_color = Some(color::TEXT);
     style.interaction.selectable_labels = false;
     ctx.set_style(style);
+    // レーザーポインタは押している間も手ぶれで動く。egui の既定(6pt 動いたら、0.8 秒押したら
+    // クリックにしない)だと、少しでも動くとクリックが消える。このパネルにはドラッグもスクロールも
+    // 長押しも無いので、押した部品の上で離せばクリックにする(外で離したら何もしない: `released_on`)。
+    ctx.options_mut(|o| {
+        o.input_options.max_click_dist = f32::INFINITY;
+        o.input_options.max_click_duration = f64::INFINITY;
+    });
 }
 
 /// 1フレーム分の UI を描き、押されたアクションと押せる場所の一覧を返す。
@@ -251,7 +258,7 @@ fn small_button(ui: &mut egui::Ui, id: &str, rect: Rect, label: &str) -> bool {
         FontId::proportional(14.0),
         color::SUBTEXT,
     );
-    resp.clicked()
+    released_on(&resp)
 }
 
 /// 丸い A/B/X/Y ボタン。オンは青く塗って光の輪、オフは暗い地に枠線、未設定は薄く押せない
@@ -293,7 +300,16 @@ fn avatar_button(ui: &mut egui::Ui, i: usize, rect: Rect, view: AvatarButtonView
         FontId::proportional(24.0),
         if view.on { Color32::WHITE } else { color::TEXT },
     );
+    released_on(&resp)
+}
+
+/// 押した部品の上で離したときだけ true(手ぶれは許すが、外へ動かして離したら押さない)
+fn released_on(resp: &egui::Response) -> bool {
     resp.clicked()
+        && resp
+            .ctx
+            .input(|i| i.pointer.interact_pos())
+            .is_some_and(|p| resp.rect.contains(p))
 }
 
 /// 押されたら true。押している間・指している間は色が変わる。
@@ -320,7 +336,7 @@ fn big_button(
         FontId::proportional(22.0),
         text,
     );
-    resp.clicked()
+    released_on(&resp)
 }
 
 fn card(ui: &egui::Ui, rect: Rect) {
@@ -409,7 +425,7 @@ fn toggle_card(
             pos2(row.right() - 12.0 - 44.0, row.center().y - 13.0),
             on,
         );
-        if resp.clicked() {
+        if released_on(&resp) {
             clicked.push(field.action);
         }
         targets.push(HitTarget {
@@ -691,5 +707,93 @@ mod tests {
         let y_center = x.center() + vec2(0.0, AVATAR_D + 14.0);
         let (clicked, _) = frame(&ctx, &s, click(y_center));
         assert!(clicked.is_empty());
+    }
+
+    /// 押す → 手ぶれで何度か動く → 離す、を1フレームずつ送る(時刻も進める)
+    fn jittery_click(
+        ctx: &egui::Context,
+        s: &OverlaySnapshot,
+        press: Pos2,
+        moves: &[egui::Vec2],
+        release: Pos2,
+        seconds: f64,
+    ) -> Vec<OverlayAction> {
+        let b = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let mut frames = vec![vec![egui::Event::PointerMoved(press), b(press, true)]];
+        for m in moves {
+            frames.push(vec![egui::Event::PointerMoved(press + *m)]);
+        }
+        frames.push(vec![egui::Event::PointerMoved(release), b(release, false)]);
+        let n = frames.len() as f64;
+        let mut all = Vec::new();
+        for (i, events) in frames.into_iter().enumerate() {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, logical_size())),
+                time: Some(10.0 + seconds * i as f64 / (n - 1.0)),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| all.extend(draw(ctx, s).0));
+        }
+        all
+    }
+
+    #[test]
+    fn click_survives_pointer_jitter_on_every_control() {
+        let ctx = egui::Context::default();
+        setup_style(&ctx);
+        let s = snapshot();
+        let (_, targets) = frame(&ctx, &s, vec![]);
+        let jitter = [
+            vec2(3.0, -2.0),
+            vec2(-7.0, 5.0),
+            vec2(9.0, 8.0),
+            vec2(-4.0, -9.0),
+        ];
+        for t in &targets {
+            let c = t.rect.center();
+            let release = c + vec2(t.rect.width() * 0.3, t.rect.height() * 0.3);
+            let clicked = jittery_click(&ctx, &s, c, &jitter, release, 0.3);
+            assert_eq!(
+                clicked,
+                vec![t.action],
+                "{:?} を手ぶれしながら押したとき",
+                t.action
+            );
+        }
+    }
+
+    #[test]
+    fn slow_trigger_pull_still_clicks() {
+        let ctx = egui::Context::default();
+        setup_style(&ctx);
+        let s = snapshot();
+        let (_, targets) = frame(&ctx, &s, vec![]);
+        let t = targets[4];
+        let c = t.rect.center();
+        assert_eq!(
+            jittery_click(&ctx, &s, c, &[vec2(2.0, 1.0)], c, 1.5),
+            vec![t.action]
+        );
+    }
+
+    #[test]
+    fn releasing_outside_the_pressed_control_does_nothing() {
+        let ctx = egui::Context::default();
+        setup_style(&ctx);
+        let s = snapshot();
+        let (_, targets) = frame(&ctx, &s, vec![]);
+        let t = targets[4];
+        let c = t.rect.center();
+        // 押したまま別の場所(見出しの文字の上)へ動かして離す
+        let away = pos2(60.0, 40.0);
+        assert!(targets.iter().all(|t| !t.rect.contains(away)));
+        let clicked = jittery_click(&ctx, &s, c, &[vec2(20.0, -40.0)], away, 0.3);
+        assert!(clicked.is_empty(), "{clicked:?}");
     }
 }
