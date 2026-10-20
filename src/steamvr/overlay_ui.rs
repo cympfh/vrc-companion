@@ -749,12 +749,22 @@ mod tests {
         setup_style(&ctx);
         let s = snapshot();
         let (_, targets) = frame(&ctx, &s, vec![]);
-        let jitter = [vec2(3.0, -2.0), vec2(-7.0, 5.0), vec2(9.0, 8.0), vec2(-4.0, -9.0)];
+        let jitter = [
+            vec2(3.0, -2.0),
+            vec2(-7.0, 5.0),
+            vec2(9.0, 8.0),
+            vec2(-4.0, -9.0),
+        ];
         for t in &targets {
             let c = t.rect.center();
             let release = c + vec2(t.rect.width() * 0.3, t.rect.height() * 0.3);
             let clicked = jittery_click(&ctx, &s, c, &jitter, release, 0.3);
-            assert_eq!(clicked, vec![t.action], "{:?} を手ぶれしながら押したとき", t.action);
+            assert_eq!(
+                clicked,
+                vec![t.action],
+                "{:?} を手ぶれしながら押したとき",
+                t.action
+            );
         }
     }
 
