@@ -1,7 +1,7 @@
 //! SteamVR オーバーレイの中身(egui)。描画先(WGL / テスト)に依存しないので全OSでテストできる。
 //!
-//! 見た目: 暗い背景にカードを並べる。上から、見出しと録音中の表示 → Start/Stop と QvPen の大きなボタン →
-//! 送り先・Eliza の2枚のカード(各行は右端にスイッチ) → 「キー割り当て変更」ボタン →
+//! 見た目: 暗い背景にカードを並べる。上から、見出し(右上に小さな「キー割り当て」ボタンと録音中の表示) →
+//! Start/Stop と QvPen の大きなボタン → 送り先・Eliza の2枚のカード(各行は右端にスイッチ) →
 //! 認識結果のカード。
 //! 座標はすべて論理ピクセル(`LOGICAL_W` × `LOGICAL_H`)。実際のテクスチャは
 //! `PIXELS_PER_POINT` 倍の解像度で描くので、大きく表示しても文字がぼやけない。
@@ -13,7 +13,7 @@ use super::bridge::{OverlayAction, OverlayField, OverlaySnapshot, overlay_fields
 
 /// UI の論理サイズ(マウス座標もこの単位)
 pub const LOGICAL_W: f32 = 600.0;
-pub const LOGICAL_H: f32 = 686.0;
+pub const LOGICAL_H: f32 = 620.0;
 /// テクスチャの解像度 = 論理サイズ × これ
 pub const PIXELS_PER_POINT: f32 = 2.0;
 
@@ -68,11 +68,19 @@ pub fn draw(
             let left = full.left() + PAD;
             let width = full.width() - PAD * 2.0;
 
-            header(
+            // 見出し。右上の小さなボタンで SteamVR のキー割り当て画面を VR の中に開く
+            let bind_rect = header(
                 ui,
                 snapshot,
                 Rect::from_min_size(pos2(left, y), vec2(width, 40.0)),
             );
+            if small_button(ui, "open_binding_ui", bind_rect, "キー割り当て") {
+                clicked.push(OverlayAction::OpenBindingUi);
+            }
+            targets.push(HitTarget {
+                action: OverlayAction::OpenBindingUi,
+                rect: bind_rect,
+            });
             y += 40.0 + GAP;
 
             // 大きなボタン2つ
@@ -131,24 +139,6 @@ pub fn draw(
             );
             y += h1.max(h2) + GAP;
 
-            // SteamVR のキー割り当て画面を VR の中に開く
-            let bind_rect = Rect::from_min_size(pos2(left, y), vec2(width, 52.0));
-            if big_button(
-                ui,
-                "open_binding_ui",
-                bind_rect,
-                "キー割り当て変更",
-                color::SECONDARY,
-                color::TEXT,
-            ) {
-                clicked.push(OverlayAction::OpenBindingUi);
-            }
-            targets.push(HitTarget {
-                action: OverlayAction::OpenBindingUi,
-                rect: bind_rect,
-            });
-            y += 52.0 + GAP;
-
             // 認識結果
             let text_rect =
                 Rect::from_min_max(pos2(left, y), pos2(left + width, full.bottom() - PAD));
@@ -157,7 +147,8 @@ pub fn draw(
     (clicked, targets)
 }
 
-fn header(ui: &egui::Ui, snapshot: &OverlaySnapshot, rect: Rect) {
+/// 見出しを描き、録音中の表示のすぐ左に置く小さなボタンの場所を返す。
+fn header(ui: &egui::Ui, snapshot: &OverlaySnapshot, rect: Rect) -> Rect {
     let p = ui.painter();
     p.text(
         pos2(rect.left() + 2.0, rect.center().y),
@@ -190,6 +181,47 @@ fn header(ui: &egui::Ui, snapshot: &OverlaySnapshot, rect: Rect) {
         galley,
         color::TEXT,
     );
+    let label_w = ui.fonts(|f| {
+        f.layout_no_wrap(
+            "キー割り当て".to_string(),
+            FontId::proportional(14.0),
+            color::TEXT,
+        )
+        .size()
+        .x
+    });
+    let btn_w = label_w + 28.0;
+    Rect::from_center_size(
+        pos2(pill.left() - 8.0 - btn_w / 2.0, rect.center().y),
+        vec2(btn_w, 32.0),
+    )
+}
+
+/// 見出しに置く控えめなボタン(枠線だけ)。押されたら true。
+fn small_button(ui: &mut egui::Ui, id: &str, rect: Rect, label: &str) -> bool {
+    let resp = ui.interact(rect, ui.id().with(id), Sense::click());
+    let p = ui.painter();
+    let fill = if resp.is_pointer_button_down_on() {
+        Color32::from_white_alpha(30)
+    } else if resp.hovered() {
+        Color32::from_white_alpha(16)
+    } else {
+        Color32::TRANSPARENT
+    };
+    p.rect(
+        rect,
+        Rounding::same(16.0),
+        fill,
+        Stroke::new(1.0, color::CARD_BORDER),
+    );
+    p.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(14.0),
+        color::SUBTEXT,
+    );
+    resp.clicked()
 }
 
 /// 押されたら true。押している間・指している間は色が変わる。
@@ -441,7 +473,7 @@ mod tests {
         setup_style(&ctx);
         let s = snapshot();
         let (_, targets) = frame(&ctx, &s, vec![]);
-        // Start/Stop、QvPen、スイッチ 7 つ、キー割り当て変更
+        // キー割り当て、Start/Stop、QvPen、スイッチ 7 つ
         assert_eq!(targets.len(), 10);
         for t in &targets {
             let (clicked, _) = frame(&ctx, &s, click(t.rect.center()));
@@ -462,7 +494,13 @@ mod tests {
                 "{:?} がはみ出している",
                 a.action
             );
-            assert!(a.rect.height() >= 44.0, "{:?} が押しにくい大きさ", a.action);
+            // 見出しの小さなボタンだけは 32 まで許す
+            let min_h = if a.action == OverlayAction::OpenBindingUi {
+                32.0
+            } else {
+                44.0
+            };
+            assert!(a.rect.height() >= min_h, "{:?} が押しにくい大きさ", a.action);
             for b in &targets[i + 1..] {
                 assert!(
                     !a.rect.intersects(b.rect.shrink(0.5)),
@@ -480,23 +518,37 @@ mod tests {
         let s = snapshot();
         let (_, targets) = frame(&ctx, &s, vec![]);
         let fields: Vec<OverlayAction> = overlay_fields(&s).iter().map(|f| f.action).collect();
-        let switches: Vec<OverlayAction> = targets[2..9].iter().map(|t| t.action).collect();
+        assert_eq!(targets[0].action, OverlayAction::OpenBindingUi);
+        let switches: Vec<OverlayAction> = targets[3..10].iter().map(|t| t.action).collect();
         assert_eq!(switches, fields);
-        assert_eq!(targets[9].action, OverlayAction::OpenBindingUi);
     }
 
     #[test]
-    fn binding_button_leaves_room_for_the_text_card() {
-        // キー割り当て変更のボタンの下に、認識結果のカードの高さが十分残る
+    fn binding_button_sits_in_the_header_left_of_the_status() {
+        // 録音中/待機中のどちらでも、見出しの行に収まり、表示とも見出しの文字とも重ならない
+        let ctx = egui::Context::default();
+        for rec in [false, true] {
+            let mut s = snapshot();
+            s.is_recording = rec;
+            let (_, targets) = frame(&ctx, &s, vec![]);
+            let open = targets[0].rect;
+            let rec_btn = targets[1].rect;
+            assert!(open.bottom() < rec_btn.top(), "見出しの行に無い");
+            assert!(open.right() < LOGICAL_W - 20.0 - 60.0, "状態表示と重なる");
+            assert!(open.left() > 20.0 + 200.0, "見出しの文字と重なる");
+            assert!(open.width() < 160.0, "小さなボタンになっていない");
+        }
+    }
+
+    #[test]
+    fn text_card_keeps_enough_room() {
+        // 一番下のスイッチの下に、認識結果のカードの高さが十分残る
         let ctx = egui::Context::default();
         let s = snapshot();
         let (_, targets) = frame(&ctx, &s, vec![]);
-        let open = targets
-            .iter()
-            .find(|t| t.action == OverlayAction::OpenBindingUi)
-            .unwrap();
+        let bottom = targets.iter().map(|t| t.rect.bottom()).fold(0.0, f32::max);
         assert!(
-            LOGICAL_H - 20.0 - (open.rect.bottom() + 14.0) >= 150.0,
+            LOGICAL_H - 20.0 - (bottom + 8.0 + 14.0) >= 150.0,
             "認識結果のカードが狭すぎる"
         );
     }
