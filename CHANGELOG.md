@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-20
+
+### Changed
+
+- VR の中のパネルの既定の大きさを 80% に（`steamvr_overlay_width_m` の既定を 2.4 → 1.92）
+- VR の中の「キー割り当て変更」ボタンを、1 行まるごと使う大きなボタンから、右上の「待機中」の左にある小さな「キー割り当て」ボタンに。パネルの高さもその分短く
+
 ## [0.5.1] - 2026-10-19
 
 ### Changed
