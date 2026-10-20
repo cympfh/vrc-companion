@@ -32,6 +32,7 @@ fn main() -> eframe::Result<()> {
         }
     }
     applog::init();
+    applog::install_panic_hook();
     crate::log!("[App] vrc-companion {} 起動", env!("CARGO_PKG_VERSION"));
     let config = Config::load();
 
@@ -665,6 +666,9 @@ impl eframe::App for App {
                         egui::Color32::RED,
                         "⚠ xAI API key not set. Please configure in Settings.",
                     );
+                }
+                if let Some(problem) = self.steamvr_overlay.as_ref().and_then(|o| o.problem()) {
+                    ui.colored_label(egui::Color32::from_rgb(0xe5, 0x48, 0x4d), format!("⚠ {}", problem));
                 }
                 if !self.status_message.is_empty() {
                     ui.label(&self.status_message);

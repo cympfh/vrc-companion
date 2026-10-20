@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-10-20
+
+### Fixed
+
+- VR の処理が落ちると、PC の画面は動いたままオーバーレイだけが黙って消え、戻らなかった。落ちたら 3 秒後につなぎ直し、PC の画面に「⚠ VR の処理が落ちたので、つなぎ直しています」と出す
+
+### Added
+
+- 落ちたときの理由（メッセージ・場所・バックトレース）をログに残す
+- WaitFrameSync の失敗は 1 分に 1 回だけ、その間の回数を添えてログに出す
+
 ## [0.6.3] - 2026-10-20
 
 ### Added

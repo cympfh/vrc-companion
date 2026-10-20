@@ -21,7 +21,7 @@ use super::input_manifest::{self, InputAction};
 use super::manifest;
 use super::overlay_ui::{LOGICAL_H, LOGICAL_W, PIXELS_PER_POINT};
 use super::render::GlOverlayRenderer;
-use super::runtime_watch::{self, AfterSession, SessionEnd, StatusLog};
+use super::runtime_watch::{self, AfterSession, RateLimited, SessionEnd, StatusLog};
 use super::toast_ui::{self, ToastKind};
 
 const OVERLAY_NAME: &str = "VRC Companion";
@@ -40,14 +40,32 @@ pub fn start(
     let flags = SessionFlags {
         connected: Arc::new(AtomicBool::new(false)),
         exit_requested: Arc::new(AtomicBool::new(false)),
+        problem: Arc::new(std::sync::Mutex::new(None)),
         egui_ctx,
     };
     let connected = flags.connected.clone();
     let exit_requested = flags.exit_requested.clone();
+    let problem = flags.problem.clone();
 
-    std::thread::spawn(move || {
-        supervise(initial, width_m, snapshot_rx, action_tx, command_rx, flags)
-    });
+    let thread_problem = problem.clone();
+    let inner_problem = problem.clone();
+    let spawned = std::thread::Builder::new()
+        .name("steamvr".into())
+        .spawn(move || {
+            let ctx = flags.egui_ctx.clone();
+            // supervise 自体が落ちたら(run_session の外)つなぎ直せないので、画面にだけ出す
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                supervise(initial, width_m, snapshot_rx, action_tx, command_rx, flags)
+            }));
+            if r.is_err() {
+                set_problem(&inner_problem, Some("VR の処理が止まった(アプリを再起動してください)".into()));
+                ctx.request_repaint();
+            }
+        });
+    if let Err(e) = spawned {
+        crate::log!("[SteamVR] スレッドを起動できない: {}", e);
+        set_problem(&thread_problem, Some("VR の処理を起動できなかった".into()));
+    }
 
     Some(OverlayHandle {
         snapshot_tx,
@@ -55,6 +73,7 @@ pub fn start(
         command_tx,
         connected,
         exit_requested,
+        problem,
     })
 }
 
@@ -62,11 +81,26 @@ pub fn start(
 struct SessionFlags {
     connected: Arc<AtomicBool>,
     exit_requested: Arc<AtomicBool>,
+    problem: Arc<std::sync::Mutex<Option<String>>>,
     /// 知らせたらすぐ画面の update() が回るように
     egui_ctx: egui::Context,
 }
 
+fn set_problem(slot: &std::sync::Mutex<Option<String>>, value: Option<String>) {
+    if let Ok(mut p) = slot.lock() {
+        *p = value;
+    }
+}
+
+/// VR の処理が落ちたら、この秒数待ってからつなぎ直す
+const RESTART_AFTER_PANIC: Duration = Duration::from_secs(3);
+
 impl SessionFlags {
+    fn set_problem(&self, value: Option<String>) {
+        set_problem(&self.problem, value);
+        self.egui_ctx.request_repaint();
+    }
+
     fn set_connected(&self, on: bool) {
         self.connected.store(on, Ordering::SeqCst);
         self.egui_ctx.request_repaint();
@@ -103,16 +137,35 @@ fn supervise(
                 )),
                 Ok(lib) => {
                     status.log("SteamVR につないだ");
+                    flags.set_problem(None);
                     flags.set_connected(true);
-                    let end = run_session(
-                        &lib,
-                        width_m,
-                        &mut latest,
-                        &snapshot_rx,
-                        &action_tx,
-                        &command_rx,
-                    );
+                    // 中でパニックしてもスレッドごと死なず、つなぎ直す(前はオーバーレイが黙って消えた)
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        run_session(
+                            &lib,
+                            width_m,
+                            &mut latest,
+                            &snapshot_rx,
+                            &action_tx,
+                            &command_rx,
+                        )
+                    }));
                     flags.set_connected(false);
+                    let end = match result {
+                        Ok(end) => end,
+                        Err(payload) => {
+                            drop(lib);
+                            crate::log!(
+                                "[SteamVR] VR の処理が落ちた({}秒後につなぎ直す): {}",
+                                RESTART_AFTER_PANIC.as_secs(),
+                                crate::applog::payload_message(payload.as_ref())
+                            );
+                            flags.set_problem(Some("VR の処理が落ちたので、つなぎ直しています".into()));
+                            status = StatusLog::default();
+                            std::thread::sleep(RESTART_AFTER_PANIC);
+                            continue;
+                        }
+                    };
                     // オーバーレイ・レンダラ・入力は run_session の中で片付いている。ここで VR_Shutdown
                     // (アプリに終了を頼むのは切断が済んでから)
                     drop(lib);
@@ -253,14 +306,17 @@ fn run_session(
 
     let mut was_recording = latest.is_recording;
     let mut last_alive_check = Instant::now();
+    let mut frame_sync_errors = RateLimited::new(Duration::from_secs(60));
     loop {
         // WaitFrameSync でコンポジタの次フレームに同期する(固定インターバルの
         // recv_timeoutによるポーリングではなく、コンポジタ側のペースに揃える)。
         // タイムアウトしても(戻り値がエラーでも)描画自体は続ける — SteamVRが
         // 一時的にフレームを配れない状況(例: ダッシュボード非表示中)でも
         // オーバーレイの更新を止めたくないため。
-        if let Err(e) = wait_frame_sync(lib, 100) {
-            crate::log!("[SteamVR] WaitFrameSync 失敗: {}", e);
+        if let Err(e) = wait_frame_sync(lib, 100)
+            && let Some(line) = frame_sync_errors.check(Instant::now(), &e)
+        {
+            crate::log!("[SteamVR] WaitFrameSync 失敗: {}", line);
         }
 
         // SteamVR が終わるなら、ほかの OpenVR 呼び出しより先に気づいて抜ける

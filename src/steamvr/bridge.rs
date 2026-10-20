@@ -173,6 +173,8 @@ pub struct OverlayHandle {
     pub connected: Arc<AtomicBool>,
     /// SteamVR が終わったのでアプリも終了してほしい(オーバーレイのスレッドが立てる)
     pub exit_requested: Arc<AtomicBool>,
+    /// VR の処理が落ちてつなぎ直している、などデスクトップ画面に出したい問題(無ければ None)
+    pub problem: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl OverlayHandle {
@@ -182,6 +184,10 @@ impl OverlayHandle {
 
     pub fn exit_requested(&self) -> bool {
         self.exit_requested.load(Ordering::SeqCst)
+    }
+
+    pub fn problem(&self) -> Option<String> {
+        self.problem.lock().ok().and_then(|p| p.clone())
     }
 }
 
