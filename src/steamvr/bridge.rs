@@ -18,6 +18,15 @@ pub struct OverlaySnapshot {
     pub last_transcription: String,
     pub last_eliza_response: String,
     pub last_translated_response: String,
+    /// 右端の A/B/X/Y ボタン
+    pub avatar_buttons: [AvatarButtonView; 4],
+}
+
+/// VR に出す A/B/X/Y ボタン1つ分。押せない(未設定)ボタンは薄く出す
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AvatarButtonView {
+    pub configured: bool,
+    pub on: bool,
 }
 
 /// App → オーバーレイのスレッドへの頼みごと(SteamVR を呼べるのはそのスレッドだけ)
@@ -34,6 +43,7 @@ impl OverlaySnapshot {
         last_transcription: &str,
         last_eliza_response: &str,
         last_translated_response: &str,
+        avatar_states: &crate::avatar_buttons::ToggleStates,
     ) -> Self {
         Self {
             clipboard_enabled: config.clipboard_enabled,
@@ -47,6 +57,13 @@ impl OverlaySnapshot {
             last_transcription: last_transcription.to_string(),
             last_eliza_response: last_eliza_response.to_string(),
             last_translated_response: last_translated_response.to_string(),
+            avatar_buttons: std::array::from_fn(|i| {
+                let b = &config.avatar_buttons[i];
+                AvatarButtonView {
+                    configured: b.is_configured() && b.error().is_none(),
+                    on: avatar_states.0[i],
+                }
+            }),
         }
     }
 }
@@ -131,6 +148,8 @@ pub enum OverlayAction {
     StartRecording,
     /// オーバーレイの「割り当てを変える」ボタン。オーバーレイのスレッドが自分で処理し、App には送らない
     OpenBindingUi,
+    /// 右端の A/B/X/Y ボタン(0〜3)を押した
+    ToggleAvatarButton(usize),
 }
 
 impl OverlayAction {
@@ -225,8 +244,14 @@ mod tests {
         config.eliza_response_to_vrchat_enabled = true;
         config.auto_translate_enabled = false;
 
-        let snapshot =
-            OverlaySnapshot::from_config(&config, true, "こんにちは", "Eliza応答", "translated");
+        let snapshot = OverlaySnapshot::from_config(
+            &config,
+            true,
+            "こんにちは",
+            "Eliza応答",
+            "translated",
+            &Default::default(),
+        );
 
         assert_eq!(snapshot.clipboard_enabled, config.clipboard_enabled);
         assert_eq!(snapshot.auto_input_enabled, config.auto_input_enabled);
@@ -251,7 +276,14 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn test_start_is_none_off_windows() {
-        let snapshot = OverlaySnapshot::from_config(&Config::default(), false, "", "", "");
+        let snapshot = OverlaySnapshot::from_config(
+            &Config::default(),
+            false,
+            "",
+            "",
+            "",
+            &Default::default(),
+        );
         assert!(start(snapshot, 2.4, egui::Context::default()).is_none());
     }
 
@@ -268,7 +300,38 @@ mod tests {
             last_transcription: String::new(),
             last_eliza_response: String::new(),
             last_translated_response: String::new(),
+            avatar_buttons: Default::default(),
         }
+    }
+
+    #[test]
+    fn test_snapshot_avatar_buttons_dim_unconfigured_and_invalid() {
+        use crate::avatar_buttons::{AvatarButton, ParamType, ToggleStates};
+        let mut config = Config::default();
+        config.avatar_buttons[0].param = "Hat".into();
+        config.avatar_buttons[1] = AvatarButton {
+            param: "Bad".into(),
+            kind: ParamType::Int,
+            on: "999".into(),
+            off: "0".into(),
+        };
+        let s = OverlaySnapshot::from_config(
+            &config,
+            false,
+            "",
+            "",
+            "",
+            &ToggleStates([true, true, false, false]),
+        );
+        let v: Vec<(bool, bool)> = s
+            .avatar_buttons
+            .iter()
+            .map(|b| (b.configured, b.on))
+            .collect();
+        assert_eq!(
+            v,
+            vec![(true, true), (false, true), (false, false), (false, false)]
+        );
     }
 
     #[test]

@@ -1,12 +1,14 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod audio;
+mod avatar_buttons;
 mod config;
 mod integrations;
 mod steamvr;
 
 use audio::AudioRecorder;
 use audio::speech_to_text::SpeechToTextClient;
+use avatar_buttons::{AvatarButton, LABELS, ParamType, ToggleStates};
 use config::Config;
 use eframe::egui;
 use integrations::{auto_input, eliza, vrchat};
@@ -82,6 +84,10 @@ struct App {
     steamvr_overlay: Option<OverlayHandle>,
 
     show_settings: bool,
+    /// A/B/X/Y の今のオン/オフ(起動時はすべてオフ)
+    avatar_states: ToggleStates,
+    /// A/B/X/Y の設定の窓。開いている間の書きかけ
+    avatar_draft: Option<[AvatarButton; 4]>,
     settings_xai_api_key: String,
     settings_eliza_url: String,
 
@@ -104,7 +110,7 @@ impl App {
             .unwrap_or(0);
 
         let steamvr_overlay = steamvr::start(
-            OverlaySnapshot::from_config(&config, false, "", "", ""),
+            OverlaySnapshot::from_config(&config, false, "", "", "", &ToggleStates::default()),
             config.steamvr_overlay_width_m,
             egui_ctx,
         );
@@ -126,6 +132,8 @@ impl App {
             translate_response_receiver: None,
             steamvr_overlay,
             show_settings: false,
+            avatar_states: ToggleStates::default(),
+            avatar_draft: None,
             available_devices,
             selected_device_index,
         }
@@ -292,6 +300,7 @@ impl App {
                 &self.transcribed_text,
                 &self.eliza_response,
                 &self.translated_response,
+                &self.avatar_states,
             ));
         }
     }
@@ -307,6 +316,66 @@ impl App {
             let _ = overlay
                 .command_tx
                 .send(steamvr::OverlayCommand::OpenBindingUi);
+        }
+    }
+
+    /// A/B/X/Y の設定の窓(別の窓)。保存すると config.json に書き、VR にも反映する
+    fn avatar_settings_window(&mut self, ctx: &egui::Context) {
+        if self.avatar_draft.is_none() {
+            return;
+        }
+        let mut close = false;
+        let mut save = false;
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("avatar_buttons"),
+            egui::ViewportBuilder::default()
+                .with_title("VR のボタン A/B/X/Y")
+                .with_inner_size([760.0, 560.0]),
+            |ctx, _| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    close = true;
+                }
+                let draft = self.avatar_draft.as_mut().expect("checked above");
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(24.0))
+                    .show(ctx, |ui| {
+                        let all_ok = avatar_settings_ui(ui, draft);
+                        ui.add_space(16.0);
+                        ui.horizontal(|ui| {
+                            let size = egui::vec2(120.0, 40.0);
+                            if ui
+                                .add_enabled(
+                                    all_ok,
+                                    egui::Button::new(egui::RichText::new("保存").size(18.0))
+                                        .min_size(size),
+                                )
+                                .clicked()
+                            {
+                                save = true;
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new(egui::RichText::new("キャンセル").size(18.0))
+                                        .min_size(size),
+                                )
+                                .clicked()
+                            {
+                                close = true;
+                            }
+                        });
+                    });
+            },
+        );
+        if save && let Some(new) = self.avatar_draft.take() {
+            self.avatar_states
+                .reset_changed(&self.config.avatar_buttons, &new);
+            self.config.avatar_buttons = new;
+            if let Err(e) = self.config.save() {
+                eprintln!("Failed to save config: {}", e);
+            }
+            self.push_steamvr_snapshot();
+        } else if close {
+            self.avatar_draft = None;
         }
     }
 
@@ -359,6 +428,16 @@ impl App {
             }
             // オーバーレイのスレッドが自分で処理するので、ここには来ない
             OverlayAction::OpenBindingUi => {}
+            OverlayAction::ToggleAvatarButton(i) => {
+                if let Some((addr, value)) =
+                    self.avatar_states.press(&self.config.avatar_buttons, i)
+                {
+                    eprintln!("[OSC] {} = {:?}", addr, value);
+                    if let Err(e) = vrchat::VRChatClient::new().send_parameter(&addr, value) {
+                        eprintln!("Failed to send avatar parameter: {}", e);
+                    }
+                }
+            }
             OverlayAction::StartRecording => {
                 // 録音中・文字起こし中は何もしない
                 if !self.is_recording && !self.is_transcribing {
@@ -471,6 +550,8 @@ impl eframe::App for App {
             }
         }
 
+        self.avatar_settings_window(ctx);
+
         if self.show_settings {
             egui::Window::new("Settings")
                 .collapsible(false)
@@ -517,6 +598,12 @@ impl eframe::App for App {
                         egui::Slider::new(&mut self.config.silence_threshold, 0.001..=0.3)
                             .logarithmic(true),
                     );
+
+                    ui.add_space(10.0);
+                    ui.separator();
+                    if ui.button("VR のボタン A/B/X/Y の設定…").clicked() {
+                        self.avatar_draft = Some(self.config.avatar_buttons.clone());
+                    }
 
                     self.steamvr_bindings_button(ui);
 
@@ -890,4 +977,75 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
     }
+}
+
+/// A/B/X/Y の設定の中身。すべて正しければ true
+fn avatar_settings_ui(ui: &mut egui::Ui, draft: &mut [AvatarButton; 4]) -> bool {
+    ui.spacing_mut().item_spacing = egui::vec2(12.0, 10.0);
+    ui.label(
+        egui::RichText::new(
+            "VR のパネル右端の丸いボタン。押すたびにオン/オフが切り替わり、\
+             その値を VRChat のアバターパラメーターに送ります。名前が空のボタンは使いません。",
+        )
+        .size(15.0)
+        .color(egui::Color32::from_gray(170)),
+    );
+    ui.add_space(8.0);
+    let mut all_ok = true;
+    for (i, b) in draft.iter_mut().enumerate() {
+        egui::Frame::group(ui.style())
+            .rounding(10.0)
+            .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(LABELS[i]).size(28.0).strong());
+                    ui.add_space(8.0);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut b.param)
+                            .hint_text("パラメーター名（例: Hat）")
+                            .font(egui::FontId::proportional(17.0))
+                            .desired_width(200.0),
+                    );
+                    let before = b.kind;
+                    egui::ComboBox::from_id_salt(("avatar_kind", i))
+                        .selected_text(b.kind.label())
+                        .width(150.0)
+                        .show_ui(ui, |ui| {
+                            for k in ParamType::ALL {
+                                ui.selectable_value(&mut b.kind, k, k.label());
+                            }
+                        });
+                    if b.kind != before {
+                        let (on, off) = b.kind.default_values();
+                        b.on = on.to_string();
+                        b.off = off.to_string();
+                    }
+                    for (caption, value) in [("オン", &mut b.on), ("オフ", &mut b.off)] {
+                        ui.label(egui::RichText::new(caption).size(15.0));
+                        if b.kind == ParamType::Bool {
+                            egui::ComboBox::from_id_salt(("avatar_bool", i, caption))
+                                .selected_text(value.as_str())
+                                .width(70.0)
+                                .show_ui(ui, |ui| {
+                                    for v in ["true", "false"] {
+                                        ui.selectable_value(value, v.to_string(), v);
+                                    }
+                                });
+                        } else {
+                            ui.add(
+                                egui::TextEdit::singleline(value)
+                                    .font(egui::FontId::proportional(17.0))
+                                    .desired_width(60.0),
+                            );
+                        }
+                    }
+                });
+                if let Some(e) = b.error() {
+                    all_ok = false;
+                    ui.colored_label(egui::Color32::from_rgb(0xe5, 0x48, 0x4d), e);
+                }
+            });
+    }
+    all_ok
 }

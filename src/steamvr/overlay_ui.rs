@@ -2,14 +2,17 @@
 //!
 //! 見た目: 暗い背景にカードを並べる。上から、見出し(右上に小さな「キー割り当て」ボタンと録音中の表示) →
 //! Start/Stop と QvPen の大きなボタン → 送り先・Eliza の2枚のカード(各行は右端にスイッチ) →
-//! 認識結果のカード。
+//! 認識結果のカード。右端には丸い A/B/X/Y ボタンが縦に4つ並ぶ(アバターパラメーターのオン/オフ)。
 //! 座標はすべて論理ピクセル(`LOGICAL_W` × `LOGICAL_H`)。実際のテクスチャは
 //! `PIXELS_PER_POINT` 倍の解像度で描くので、大きく表示しても文字がぼやけない。
 
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{Color32, FontId, Pos2, Rect, Rounding, Sense, Stroke, pos2, vec2};
 
-use super::bridge::{OverlayAction, OverlayField, OverlaySnapshot, overlay_fields};
+use super::bridge::{
+    AvatarButtonView, OverlayAction, OverlayField, OverlaySnapshot, overlay_fields,
+};
+use crate::avatar_buttons::LABELS;
 
 /// UI の論理サイズ(マウス座標もこの単位)
 pub const LOGICAL_W: f32 = 600.0;
@@ -34,6 +37,8 @@ pub(super) mod color {
 const PAD: f32 = 20.0;
 const GAP: f32 = 14.0;
 const RADIUS: f32 = 14.0;
+/// 右端の丸いボタンの直径
+const AVATAR_D: f32 = 62.0;
 
 /// 押せる場所1つ分(テストでクリック位置を決めるのにも使う)
 #[derive(Debug, Clone, Copy)]
@@ -82,6 +87,26 @@ pub fn draw(
                 rect: bind_rect,
             });
             y += 40.0 + GAP;
+
+            // 右端の A/B/X/Y。残りはその左に並べる
+            let mut ay = y;
+            for (i, view) in snapshot.avatar_buttons.iter().enumerate() {
+                let rect = Rect::from_min_size(
+                    pos2(left + width - AVATAR_D, ay),
+                    vec2(AVATAR_D, AVATAR_D),
+                );
+                let action = OverlayAction::ToggleAvatarButton(i);
+                if avatar_button(ui, i, rect, *view) {
+                    clicked.push(action);
+                }
+                if view.configured {
+                    targets.push(HitTarget { action, rect });
+                }
+                ay += AVATAR_D + GAP;
+            }
+            let strip_bottom = ay - GAP;
+            let full_width = width;
+            let width = width - AVATAR_D - GAP;
 
             // 大きなボタン2つ
             let qv_w = 168.0;
@@ -139,9 +164,14 @@ pub fn draw(
             );
             y += h1.max(h2) + GAP;
 
-            // 認識結果
+            // 認識結果。丸いボタンより下なら横いっぱいに使う
+            let text_w = if y >= strip_bottom + GAP {
+                full_width
+            } else {
+                width
+            };
             let text_rect =
-                Rect::from_min_max(pos2(left, y), pos2(left + width, full.bottom() - PAD));
+                Rect::from_min_max(pos2(left, y), pos2(left + text_w, full.bottom() - PAD));
             text_card(ui, snapshot, text_rect);
         });
     (clicked, targets)
@@ -220,6 +250,48 @@ fn small_button(ui: &mut egui::Ui, id: &str, rect: Rect, label: &str) -> bool {
         label,
         FontId::proportional(14.0),
         color::SUBTEXT,
+    );
+    resp.clicked()
+}
+
+/// 丸い A/B/X/Y ボタン。オンは青く塗って光の輪、オフは暗い地に枠線、未設定は薄く押せない
+fn avatar_button(ui: &mut egui::Ui, i: usize, rect: Rect, view: AvatarButtonView) -> bool {
+    let c = rect.center();
+    let r = rect.width() / 2.0;
+    let p = ui.painter().clone();
+    let label = LABELS[i];
+    if !view.configured {
+        p.circle(c, r - 1.0, color::BG, Stroke::new(1.0, color::CARD_BORDER));
+        p.text(
+            c,
+            egui::Align2::CENTER_CENTER,
+            label,
+            FontId::proportional(22.0),
+            color::TRACK_OFF,
+        );
+        return false;
+    }
+    let resp = ui.interact(rect, ui.id().with(("avatar", i)), Sense::click());
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(ui.id().with(("avatar_on", i)), view.on, 0.12);
+    if t > 0.0 {
+        p.circle_filled(c, r, color::ACCENT.gamma_multiply(0.35 * t));
+    }
+    let fill = lerp_color(color::CARD, color::ACCENT, t);
+    let border = lerp_color(color::SUBTEXT, color::ACCENT, t);
+    p.circle(c, r - 5.0, fill, Stroke::new(2.0, border));
+    if resp.is_pointer_button_down_on() {
+        p.circle_filled(c, r - 5.0, Color32::from_black_alpha(60));
+    } else if resp.hovered() {
+        p.circle_filled(c, r - 5.0, Color32::from_white_alpha(22));
+    }
+    p.text(
+        c,
+        egui::Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(24.0),
+        if view.on { Color32::WHITE } else { color::TEXT },
     );
     resp.clicked()
 }
@@ -439,6 +511,21 @@ mod tests {
             last_translated_response:
                 "Hello, this is a fairly long translated sentence that should wrap onto more lines"
                     .to_string(),
+            avatar_buttons: [
+                AvatarButtonView {
+                    configured: true,
+                    on: true,
+                },
+                AvatarButtonView {
+                    configured: true,
+                    on: false,
+                },
+                AvatarButtonView {
+                    configured: true,
+                    on: false,
+                },
+                AvatarButtonView::default(),
+            ],
         }
     }
 
@@ -473,8 +560,8 @@ mod tests {
         setup_style(&ctx);
         let s = snapshot();
         let (_, targets) = frame(&ctx, &s, vec![]);
-        // キー割り当て、Start/Stop、QvPen、スイッチ 7 つ
-        assert_eq!(targets.len(), 10);
+        // キー割り当て、A/B/X(Y は未設定)、Start/Stop、QvPen、スイッチ 7 つ
+        assert_eq!(targets.len(), 13);
         for t in &targets {
             let (clicked, _) = frame(&ctx, &s, click(t.rect.center()));
             assert_eq!(clicked, vec![t.action], "{:?} を押したとき", t.action);
@@ -500,7 +587,11 @@ mod tests {
             } else {
                 44.0
             };
-            assert!(a.rect.height() >= min_h, "{:?} が押しにくい大きさ", a.action);
+            assert!(
+                a.rect.height() >= min_h,
+                "{:?} が押しにくい大きさ",
+                a.action
+            );
             for b in &targets[i + 1..] {
                 assert!(
                     !a.rect.intersects(b.rect.shrink(0.5)),
@@ -519,7 +610,7 @@ mod tests {
         let (_, targets) = frame(&ctx, &s, vec![]);
         let fields: Vec<OverlayAction> = overlay_fields(&s).iter().map(|f| f.action).collect();
         assert_eq!(targets[0].action, OverlayAction::OpenBindingUi);
-        let switches: Vec<OverlayAction> = targets[3..10].iter().map(|t| t.action).collect();
+        let switches: Vec<OverlayAction> = targets[6..13].iter().map(|t| t.action).collect();
         assert_eq!(switches, fields);
     }
 
@@ -532,7 +623,7 @@ mod tests {
             s.is_recording = rec;
             let (_, targets) = frame(&ctx, &s, vec![]);
             let open = targets[0].rect;
-            let rec_btn = targets[1].rect;
+            let rec_btn = targets[4].rect;
             assert!(open.bottom() < rec_btn.top(), "見出しの行に無い");
             assert!(open.right() < LOGICAL_W - 20.0 - 60.0, "状態表示と重なる");
             assert!(open.left() > 20.0 + 200.0, "見出しの文字と重なる");
@@ -551,5 +642,54 @@ mod tests {
             LOGICAL_H - 20.0 - (bottom + 8.0 + 14.0) >= 150.0,
             "認識結果のカードが狭すぎる"
         );
+    }
+
+    #[test]
+    fn avatar_buttons_are_a_column_at_the_right_edge() {
+        let ctx = egui::Context::default();
+        let mut s = snapshot();
+        s.avatar_buttons = [AvatarButtonView {
+            configured: true,
+            on: false,
+        }; 4];
+        let (_, targets) = frame(&ctx, &s, vec![]);
+        let av: Vec<Rect> = (0..4)
+            .map(|i| {
+                targets
+                    .iter()
+                    .find(|t| t.action == OverlayAction::ToggleAvatarButton(i))
+                    .unwrap()
+                    .rect
+            })
+            .collect();
+        let header_bottom = targets[0].rect.bottom();
+        for (i, r) in av.iter().enumerate() {
+            assert_eq!(r.right(), LOGICAL_W - 20.0, "右端に揃っていない");
+            assert!(r.top() > header_bottom, "見出しと重なる");
+            if i > 0 {
+                assert!(r.top() > av[i - 1].bottom(), "上から A B X Y の順でない");
+            }
+        }
+    }
+
+    #[test]
+    fn unconfigured_avatar_button_is_not_clickable() {
+        let ctx = egui::Context::default();
+        let s = snapshot();
+        let (_, targets) = frame(&ctx, &s, vec![]);
+        assert!(
+            !targets
+                .iter()
+                .any(|t| t.action == OverlayAction::ToggleAvatarButton(3))
+        );
+        // Y のあった場所を押しても何も起きない
+        let x = targets
+            .iter()
+            .find(|t| t.action == OverlayAction::ToggleAvatarButton(2))
+            .unwrap()
+            .rect;
+        let y_center = x.center() + vec2(0.0, AVATAR_D + 14.0);
+        let (clicked, _) = frame(&ctx, &s, click(y_center));
+        assert!(clicked.is_empty());
     }
 }
