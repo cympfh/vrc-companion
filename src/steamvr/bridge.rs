@@ -152,24 +152,44 @@ pub struct OverlayHandle {
     pub command_tx: Sender<OverlayCommand>,
     /// いま SteamVR につながっているか(オーバーレイのスレッドが更新する)
     pub connected: Arc<AtomicBool>,
+    /// SteamVR が終わったのでアプリも終了してほしい(オーバーレイのスレッドが立てる)
+    pub exit_requested: Arc<AtomicBool>,
 }
 
 impl OverlayHandle {
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::SeqCst)
     }
+
+    pub fn exit_requested(&self) -> bool {
+        self.exit_requested.load(Ordering::SeqCst)
+    }
 }
 
 /// SteamVR オーバーレイのスレッドを起動する(Windows では常に Some、それ以外は None)。
 /// SteamVR が動いていなくてもよい: スレッドが SteamVR の起動を待ち、来たらつなぐ(`is_connected`)。
+/// つないだあとに SteamVR が終わったら `exit_requested` が立つので、アプリは終了する。
+/// `egui_ctx` は知らせたときにデスクトップの画面をすぐ起こすため。
 /// `width_m` はオーバーレイの表示幅(メートル、Config の `steamvr_overlay_width_m`)。
 #[cfg(windows)]
-pub fn start(initial: OverlaySnapshot, width_m: f32) -> Option<OverlayHandle> {
-    super::session::start(initial, crate::config::clamp_overlay_width_m(width_m))
+pub fn start(
+    initial: OverlaySnapshot,
+    width_m: f32,
+    egui_ctx: egui::Context,
+) -> Option<OverlayHandle> {
+    super::session::start(
+        initial,
+        crate::config::clamp_overlay_width_m(width_m),
+        egui_ctx,
+    )
 }
 
 #[cfg(not(windows))]
-pub fn start(_initial: OverlaySnapshot, _width_m: f32) -> Option<OverlayHandle> {
+pub fn start(
+    _initial: OverlaySnapshot,
+    _width_m: f32,
+    _egui_ctx: egui::Context,
+) -> Option<OverlayHandle> {
     None
 }
 
@@ -227,11 +247,12 @@ mod tests {
         assert_eq!(snapshot.last_translated_response, "translated");
     }
 
+    // Windows では本物の見張りスレッドが動き、SteamVR が起動していればつないでしまうので呼ばない
+    #[cfg(not(windows))]
     #[test]
-    fn test_start_returns_none_or_some_without_panicking() {
-        // 実機(SteamVR)無しでも呼べることだけを保証する。非Windowsでは常にNone。
+    fn test_start_is_none_off_windows() {
         let snapshot = OverlaySnapshot::from_config(&Config::default(), false, "", "", "");
-        let _ = start(snapshot, 2.4);
+        assert!(start(snapshot, 2.4, egui::Context::default()).is_none());
     }
 
     fn all_false_snapshot() -> OverlaySnapshot {
