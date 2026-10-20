@@ -2,7 +2,7 @@
 //! 本物の描画経路(WGL + egui_glow)で BMP に書き出す。見た目の確認・README 用。
 //! サンプルの文字列は合成データ。
 
-use super::bridge::OverlaySnapshot;
+use super::bridge::{AvatarButtonView, OverlaySnapshot};
 use super::overlay_ui::PIXELS_PER_POINT;
 use super::render::GlOverlayRenderer;
 use super::session::{OVERLAY_HEIGHT, OVERLAY_WIDTH};
@@ -23,6 +23,11 @@ fn samples() -> Vec<(&'static str, OverlaySnapshot)> {
         last_eliza_response: String::new(),
         last_translated_response: "Hello, nice weather today. Want to go world hopping later?"
             .to_string(),
+        // A オン、B・X オフ、Y 未設定
+        avatar_buttons: std::array::from_fn(|i| AvatarButtonView {
+            configured: i < 3,
+            on: i == 0,
+        }),
     };
     let recording = OverlaySnapshot {
         is_recording: true,

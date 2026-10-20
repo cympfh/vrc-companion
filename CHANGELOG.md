@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-20
+
+### Added
+
+- VR のパネル右端に丸いボタン A/B/X/Y。押すたびにオン/オフが切り替わり、VRChat のアバターパラメーター `/avatar/parameters/<名前>` に OSC（127.0.0.1:9000）で値を送る。起動時はすべてオフ
+- PC の Settings →「VR のボタン A/B/X/Y の設定…」で、ボタンごとにパラメーター名・型（Bool / Int 0〜255 / Float -1.0〜1.0）・オンの値・オフの値を決める。config.json の `avatar_buttons` に保存。名前が空のボタンは VR で薄く表示され、押しても何もしない
+
 ## [0.5.2] - 2026-10-20
 
 ### Changed

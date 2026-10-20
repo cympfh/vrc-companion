@@ -35,6 +35,9 @@ pub struct Config {
     /// SteamVR オーバーレイの表示幅(メートル)。起動時に読む
     #[serde(default = "default_steamvr_overlay_width_m")]
     pub steamvr_overlay_width_m: f32,
+    /// VR パネル右端の A/B/X/Y ボタン(アバターパラメーター)
+    #[serde(default = "crate::avatar_buttons::default_buttons")]
+    pub avatar_buttons: [crate::avatar_buttons::AvatarButton; 4],
 }
 
 fn default_silence_duration_secs() -> f32 {
@@ -119,6 +122,7 @@ impl Default for Config {
             translate_lang_preset: default_translate_lang_preset(),
             translate_lang_custom: default_translate_lang_custom(),
             steamvr_overlay_width_m: default_steamvr_overlay_width_m(),
+            avatar_buttons: crate::avatar_buttons::default_buttons(),
         }
     }
 }

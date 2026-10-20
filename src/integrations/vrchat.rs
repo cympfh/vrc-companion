@@ -32,11 +32,19 @@ impl VRChatClient {
 
     /// Send a message to VRChat via OSC (/chatbox/input)
     pub fn send_message(&self, message: &str) -> Result<(), VRChatError> {
+        self.send(&build_chatbox_packet(message))
+    }
+
+    /// アバターパラメーターを送る(`addr` は `/avatar/parameters/<名前>`)
+    pub fn send_parameter(&self, addr: &str, value: OscType) -> Result<(), VRChatError> {
+        self.send(&build_parameter_packet(addr, value))
+    }
+
+    fn send(&self, packet: &OscPacket) -> Result<(), VRChatError> {
         let socket = UdpSocket::bind("0.0.0.0:0")
             .map_err(|e| VRChatError::SocketError(format!("Failed to bind socket: {}", e)))?;
 
-        let packet = build_chatbox_packet(message);
-        let msg_buf = encoder::encode(&packet)
+        let msg_buf = encoder::encode(packet)
             .map_err(|e| VRChatError::SendError(format!("Failed to encode OSC message: {}", e)))?;
 
         socket
@@ -64,6 +72,13 @@ fn build_chatbox_packet(text: &str) -> OscPacket {
     })
 }
 
+fn build_parameter_packet(addr: &str, value: OscType) -> OscPacket {
+    OscPacket::Message(OscMessage {
+        addr: addr.to_string(),
+        args: vec![value],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,5 +99,30 @@ mod tests {
             }
             _ => panic!("expected OscPacket::Message"),
         }
+    }
+
+    /// バイト列を直接確かめる: アドレスと型タグは 4 バイト境界まで 0 で埋め、値はビッグエンディアン
+    #[test]
+    fn test_parameter_packet_bytes() {
+        let enc =
+            |v| encoder::encode(&build_parameter_packet("/avatar/parameters/Hat", v)).unwrap();
+        // "/avatar/parameters/Hat" は 22 バイト → 0 を足して 24
+        let mut addr = b"/avatar/parameters/Hat".to_vec();
+        addr.extend([0, 0]);
+        let mut int = addr.clone();
+        int.extend(b",i\0\0");
+        int.extend(200i32.to_be_bytes());
+        assert_eq!(enc(OscType::Int(200)), int);
+        let mut float = addr.clone();
+        float.extend(b",f\0\0");
+        float.extend((-0.5f32).to_be_bytes());
+        assert_eq!(enc(OscType::Float(-0.5)), float);
+        let mut t = addr.clone();
+        t.extend(b",T\0\0");
+        assert_eq!(enc(OscType::Bool(true)), t);
+        let mut f = addr.clone();
+        f.extend(b",F\0\0");
+        assert_eq!(enc(OscType::Bool(false)), f);
+        assert!(enc(OscType::Int(1)).len() % 4 == 0);
     }
 }
