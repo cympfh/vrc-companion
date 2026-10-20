@@ -204,7 +204,10 @@ mod tests {
             r.check(t0 + Duration::from_secs(61), "e").as_deref(),
             Some("e (この間ほかに 2 回)")
         );
-        assert_eq!(r.check(t0 + Duration::from_secs(200), "e").as_deref(), Some("e"));
+        assert_eq!(
+            r.check(t0 + Duration::from_secs(200), "e").as_deref(),
+            Some("e")
+        );
     }
 
     #[test]

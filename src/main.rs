@@ -668,7 +668,10 @@ impl eframe::App for App {
                     );
                 }
                 if let Some(problem) = self.steamvr_overlay.as_ref().and_then(|o| o.problem()) {
-                    ui.colored_label(egui::Color32::from_rgb(0xe5, 0x48, 0x4d), format!("⚠ {}", problem));
+                    ui.colored_label(
+                        egui::Color32::from_rgb(0xe5, 0x48, 0x4d),
+                        format!("⚠ {}", problem),
+                    );
                 }
                 if !self.status_message.is_empty() {
                     ui.label(&self.status_message);

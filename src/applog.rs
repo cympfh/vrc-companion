@@ -61,7 +61,8 @@ pub fn install_panic_hook() {
         let msg = panic_line(
             thread.name().unwrap_or("?"),
             &payload_message(info.payload()),
-            info.location().map(|l| format!("{}:{}", l.file(), l.line())),
+            info.location()
+                .map(|l| format!("{}:{}", l.file(), l.line())),
         );
         let bt = std::backtrace::Backtrace::force_capture();
         let line = format!("{}\n{}", msg, bt);
@@ -70,7 +71,9 @@ pub fn install_panic_hook() {
         if let Ok(mut guard) = LOG.try_lock()
             && let Some(log) = guard.as_mut()
         {
-            let _ = log.file.write_all(format_line(&now_local(), &line).as_bytes());
+            let _ = log
+                .file
+                .write_all(format_line(&now_local(), &line).as_bytes());
         }
     }));
 }

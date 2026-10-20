@@ -58,7 +58,10 @@ pub fn start(
                 supervise(initial, width_m, snapshot_rx, action_tx, command_rx, flags)
             }));
             if r.is_err() {
-                set_problem(&inner_problem, Some("VR の処理が止まった(アプリを再起動してください)".into()));
+                set_problem(
+                    &inner_problem,
+                    Some("VR の処理が止まった(アプリを再起動してください)".into()),
+                );
                 ctx.request_repaint();
             }
         });
@@ -160,7 +163,9 @@ fn supervise(
                                 RESTART_AFTER_PANIC.as_secs(),
                                 crate::applog::payload_message(payload.as_ref())
                             );
-                            flags.set_problem(Some("VR の処理が落ちたので、つなぎ直しています".into()));
+                            flags.set_problem(Some(
+                                "VR の処理が落ちたので、つなぎ直しています".into(),
+                            ));
                             status = StatusLog::default();
                             std::thread::sleep(RESTART_AFTER_PANIC);
                             continue;
