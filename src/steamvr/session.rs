@@ -606,7 +606,9 @@ impl SteamVrInput {
             }
             crate::log!(
                 "[SteamVR] SetActionManifestPath 失敗 ({}/{}): EVRInputError={}",
-                attempt, SET_MANIFEST_ATTEMPTS, err
+                attempt,
+                SET_MANIFEST_ATTEMPTS,
+                err
             );
             if err != ffi::INPUT_ERROR_IPC || attempt == SET_MANIFEST_ATTEMPTS {
                 return None;
@@ -672,7 +674,8 @@ impl SteamVrInput {
         if err != 0 {
             crate::log!(
                 "[SteamVR] OpenBindingUI(on_desktop={}) 失敗: EVRInputError={}",
-                on_desktop, err
+                on_desktop,
+                err
             );
         } else {
             crate::log!(

@@ -35,8 +35,16 @@ fn open_in(dir: &Path) -> std::io::Result<LogFile> {
     std::fs::create_dir_all(dir)?;
     let path = dir.join(FILE_NAME);
     rotate(&path);
-    let file = OpenOptions::new().create(true).write(true).truncate(true).open(&path)?;
-    Ok(LogFile { path, file, written: 0 })
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)?;
+    Ok(LogFile {
+        path,
+        file,
+        written: 0,
+    })
 }
 
 fn rotate(path: &Path) {
@@ -57,10 +65,10 @@ pub fn write(msg: &str) {
         let dir = log.path.parent().map(Path::to_path_buf);
         *guard = dir.and_then(|d| open_in(&d).ok());
     }
-    if let Some(log) = guard.as_mut() {
-        if log.file.write_all(line.as_bytes()).is_ok() {
-            log.written += line.len() as u64;
-        }
+    if let Some(log) = guard.as_mut()
+        && log.file.write_all(line.as_bytes()).is_ok()
+    {
+        log.written += line.len() as u64;
     }
 }
 
@@ -79,7 +87,15 @@ fn now_local() -> Stamp {
     use windows_sys::Win32::System::SystemInformation::GetLocalTime;
     let mut st = unsafe { std::mem::zeroed() };
     unsafe { GetLocalTime(&mut st) };
-    (st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds)
+    (
+        st.wYear,
+        st.wMonth,
+        st.wDay,
+        st.wHour,
+        st.wMinute,
+        st.wSecond,
+        st.wMilliseconds,
+    )
 }
 
 /// Windows 以外(テスト用)は UTC
@@ -144,7 +160,10 @@ mod tests {
         let mut second = open_in(&dir).unwrap();
         second.file.write_all(b"run2\n").unwrap();
         drop(second);
-        assert_eq!(std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(), "run2\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(),
+            "run2\n"
+        );
         assert_eq!(
             std::fs::read_to_string(dir.join("vrc-companion.log.1")).unwrap(),
             "run1\n"

@@ -479,7 +479,8 @@ impl OpenVrLibrary {
         } else {
             crate::log!(
                 "[SteamVR] {} インターフェース取得失敗: code={}",
-                IVRSYSTEM_VERSION, system_err
+                IVRSYSTEM_VERSION,
+                system_err
             );
             None
         };
