@@ -96,7 +96,7 @@ impl StatusLog {
 
     pub fn log(&mut self, message: &str) {
         if self.changed(message) {
-            eprintln!("[SteamVR] {}", message);
+            crate::log!("[SteamVR] {}", message);
         }
     }
 }

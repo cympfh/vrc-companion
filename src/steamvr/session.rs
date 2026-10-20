@@ -193,7 +193,7 @@ fn run_session(
     {
         Ok(path) => Some(path),
         Err(e) => {
-            eprintln!(
+            crate::log!(
                 "[SteamVR] アクションマニフェスト書き込み失敗 (ボタン割り当ては無効): {}",
                 e
             );
@@ -218,22 +218,22 @@ fn run_session(
     };
 
     if let Err(e) = show_overlay(lib, overlay_handle) {
-        eprintln!("[SteamVR] ShowOverlay 失敗: {}", e);
+        crate::log!("[SteamVR] ShowOverlay 失敗: {}", e);
     }
 
     // SetOverlayInputMethod を呼ばない限りコンポジタはこのオーバーレイに対して
     // MouseMove/MouseButtonDown/Up を一切生成しない(デフォルトはInputMethod_None)。
     // これが無いと表示だけされてレーザーポインタ操作が効かない。
     if let Err(e) = set_overlay_input_method(lib, overlay_handle) {
-        eprintln!("[SteamVR] SetOverlayInputMethod 失敗: {}", e);
+        crate::log!("[SteamVR] SetOverlayInputMethod 失敗: {}", e);
     }
     // マウス座標は UI の論理ピクセルで受け取る(テクスチャは PIXELS_PER_POINT 倍の解像度)
     if let Err(e) = set_overlay_mouse_scale(lib, overlay_handle, LOGICAL_W, LOGICAL_H) {
-        eprintln!("[SteamVR] SetOverlayMouseScale 失敗: {}", e);
+        crate::log!("[SteamVR] SetOverlayMouseScale 失敗: {}", e);
     }
     // 表示の大きさ(幅)。呼ばないと SteamVR の既定の 1m になり、小さくて読みにくかった
     if let Err(e) = set_overlay_width_in_meters(lib, overlay_handle, width_m) {
-        eprintln!("[SteamVR] SetOverlayWidthInMeters 失敗: {}", e);
+        crate::log!("[SteamVR] SetOverlayWidthInMeters 失敗: {}", e);
     }
 
     let mut renderer = match GlOverlayRenderer::new(OVERLAY_WIDTH, OVERLAY_HEIGHT, PIXELS_PER_POINT)
@@ -246,7 +246,7 @@ fn run_session(
     let mut toast = match Toast::create(lib) {
         Ok(t) => Some(t),
         Err(e) => {
-            eprintln!("[SteamVR] トースト用オーバーレイを作れなかった: {}", e);
+            crate::log!("[SteamVR] トースト用オーバーレイを作れなかった: {}", e);
             None
         }
     };
@@ -260,7 +260,7 @@ fn run_session(
         // 一時的にフレームを配れない状況(例: ダッシュボード非表示中)でも
         // オーバーレイの更新を止めたくないため。
         if let Err(e) = wait_frame_sync(lib, 100) {
-            eprintln!("[SteamVR] WaitFrameSync 失敗: {}", e);
+            crate::log!("[SteamVR] WaitFrameSync 失敗: {}", e);
         }
 
         // SteamVR が終わるなら、ほかの OpenVR 呼び出しより先に気づいて抜ける
@@ -306,7 +306,7 @@ fn run_session(
                 OverlayCommand::OpenBindingUi => match input.as_ref() {
                     Some(i) => i.open_binding_ui(lib, true),
                     None => {
-                        eprintln!("[SteamVR] SteamVR Input が使えないので割り当て画面を開けない")
+                        crate::log!("[SteamVR] SteamVR Input が使えないので割り当て画面を開けない")
                     }
                 },
             }
@@ -317,7 +317,7 @@ fn run_session(
             Ok((texture, actions)) => {
                 if !actions.is_empty() {
                     if let Err(e) = trigger_laser_mouse_haptic_vibration(lib, overlay_handle) {
-                        eprintln!("[SteamVR] TriggerLaserMouseHapticVibration 失敗: {}", e);
+                        crate::log!("[SteamVR] TriggerLaserMouseHapticVibration 失敗: {}", e);
                     }
                 }
                 for action in actions {
@@ -325,7 +325,7 @@ fn run_session(
                         // VR の中(ダッシュボード)で SteamVR の割り当て画面を開く
                         match input.as_ref() {
                             Some(i) => i.open_binding_ui(lib, false),
-                            None => eprintln!(
+                            None => crate::log!(
                                 "[SteamVR] SteamVR Input が使えないので割り当て画面を開けない"
                             ),
                         }
@@ -339,10 +339,10 @@ fn run_session(
                     e_color_space: ffi::COLOR_SPACE_AUTO,
                 };
                 if let Err(e) = set_overlay_texture(lib, overlay_handle, &mut tex) {
-                    eprintln!("[SteamVR] SetOverlayTexture 失敗: {}", e);
+                    crate::log!("[SteamVR] SetOverlayTexture 失敗: {}", e);
                 }
             }
-            Err(e) => eprintln!("[SteamVR] render 失敗: {}", e),
+            Err(e) => crate::log!("[SteamVR] render 失敗: {}", e),
         }
     }
 }
@@ -412,7 +412,7 @@ fn ensure_auto_launch_registered(lib: &OpenVrLibrary, action_manifest: Option<&s
     let path = match manifest::write_manifest(action_manifest) {
         Ok(path) => path,
         Err(e) => {
-            eprintln!("[SteamVR] マニフェスト書き込み失敗: {}", e);
+            crate::log!("[SteamVR] マニフェスト書き込み失敗: {}", e);
             return;
         }
     };
@@ -420,14 +420,14 @@ fn ensure_auto_launch_registered(lib: &OpenVrLibrary, action_manifest: Option<&s
     let path_c = match CString::new(path.to_string_lossy().into_owned()) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[SteamVR] マニフェストパスのCString化失敗: {}", e);
+            crate::log!("[SteamVR] マニフェストパスのCString化失敗: {}", e);
             return;
         }
     };
     let err =
         unsafe { (applications.add_application_manifest)(path_c.as_ptr() as *mut c_char, false) };
     if err != 0 {
-        eprintln!(
+        crate::log!(
             "[SteamVR] AddApplicationManifest 失敗: EVRApplicationError={}",
             err
         );
@@ -445,7 +445,7 @@ fn ensure_auto_launch_registered(lib: &OpenVrLibrary, action_manifest: Option<&s
         (applications.identify_application)(std::process::id(), key.as_ptr() as *mut c_char)
     };
     if err != 0 {
-        eprintln!(
+        crate::log!(
             "[SteamVR] IdentifyApplication: EVRApplicationError={} (SteamVR から起動された場合は無視してよい)",
             err
         );
@@ -454,12 +454,12 @@ fn ensure_auto_launch_registered(lib: &OpenVrLibrary, action_manifest: Option<&s
     let err =
         unsafe { (applications.set_application_auto_launch)(key.as_ptr() as *mut c_char, true) };
     if err != 0 {
-        eprintln!(
+        crate::log!(
             "[SteamVR] SetApplicationAutoLaunch 失敗: EVRApplicationError={}",
             err
         );
     } else {
-        eprintln!("[SteamVR] SteamVR の自動起動に登録した: {}", path.display());
+        crate::log!("[SteamVR] SteamVR の自動起動に登録した: {}", path.display());
     }
 }
 
@@ -500,7 +500,7 @@ impl Toast {
         unsafe {
             let e = (ov.set_overlay_width_in_meters)(handle, toast_ui::TOAST_WIDTH_M);
             if e != 0 {
-                eprintln!(
+                crate::log!(
                     "[SteamVR] トースト SetOverlayWidthInMeters: EVROverlayError={}",
                     e
                 );
@@ -511,7 +511,7 @@ impl Toast {
                 &mut transform,
             );
             if e != 0 {
-                eprintln!(
+                crate::log!(
                     "[SteamVR] トースト SetOverlayTransformTrackedDeviceRelative: EVROverlayError={}",
                     e
                 );
@@ -535,7 +535,7 @@ impl Toast {
         {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("[SteamVR] トーストの描画に失敗: {}", e);
+                crate::log!("[SteamVR] トーストの描画に失敗: {}", e);
                 return;
             }
         };
@@ -545,18 +545,18 @@ impl Toast {
             e_color_space: ffi::COLOR_SPACE_AUTO,
         };
         if let Err(e) = set_overlay_texture(lib, self.handle, &mut tex) {
-            eprintln!("[SteamVR] トースト SetOverlayTexture 失敗: {}", e);
+            crate::log!("[SteamVR] トースト SetOverlayTexture 失敗: {}", e);
             return;
         }
         unsafe {
             let _ = (lib.overlay().set_overlay_alpha)(self.handle, 0.0);
         }
         if let Err(e) = show_overlay(lib, self.handle) {
-            eprintln!("[SteamVR] トースト ShowOverlay 失敗: {}", e);
+            crate::log!("[SteamVR] トースト ShowOverlay 失敗: {}", e);
             return;
         }
         self.shown_at = Some(Instant::now());
-        eprintln!("[SteamVR] トースト: {:?}", kind);
+        crate::log!("[SteamVR] トースト: {:?}", kind);
     }
 
     /// 毎フレーム呼ぶ。透明度を時間に合わせて変え、時間が来たら隠す
@@ -604,7 +604,7 @@ impl SteamVrInput {
             if err == 0 {
                 break;
             }
-            eprintln!(
+            crate::log!(
                 "[SteamVR] SetActionManifestPath 失敗 ({}/{}): EVRInputError={}",
                 attempt, SET_MANIFEST_ATTEMPTS, err
             );
@@ -623,7 +623,7 @@ impl SteamVrInput {
             (input.get_action_set_handle)(set_c.as_ptr() as *mut c_char, &mut action_set)
         };
         if err != 0 {
-            eprintln!("[SteamVR] GetActionSetHandle 失敗: EVRInputError={}", err);
+            crate::log!("[SteamVR] GetActionSetHandle 失敗: EVRInputError={}", err);
             return None;
         }
 
@@ -634,7 +634,7 @@ impl SteamVrInput {
             let err =
                 unsafe { (input.get_action_handle)(name.as_ptr() as *mut c_char, &mut handle) };
             if err != 0 {
-                eprintln!(
+                crate::log!(
                     "[SteamVR] GetActionHandle({}) 失敗: EVRInputError={}",
                     action.path(),
                     err
@@ -643,7 +643,7 @@ impl SteamVrInput {
             }
             actions.push((action, handle));
         }
-        eprintln!(
+        crate::log!(
             "[SteamVR] ボタン割り当て(SteamVR Input)を有効化: {}",
             manifest_path.display()
         );
@@ -670,12 +670,12 @@ impl SteamVrInput {
             )
         };
         if err != 0 {
-            eprintln!(
+            crate::log!(
                 "[SteamVR] OpenBindingUI(on_desktop={}) 失敗: EVRInputError={}",
                 on_desktop, err
             );
         } else {
-            eprintln!(
+            crate::log!(
                 "[SteamVR] OpenBindingUI(on_desktop={}) を呼んだ",
                 on_desktop
             );
@@ -703,7 +703,7 @@ impl SteamVrInput {
         };
         if err != 0 {
             if !self.warned {
-                eprintln!("[SteamVR] UpdateActionState 失敗: EVRInputError={}", err);
+                crate::log!("[SteamVR] UpdateActionState 失敗: EVRInputError={}", err);
                 self.warned = true;
             }
             return Vec::new();
@@ -725,7 +725,7 @@ impl SteamVrInput {
             }
         }
         for a in &pressed {
-            eprintln!("[SteamVR] ボタン操作: {}", a.label_ja());
+            crate::log!("[SteamVR] ボタン操作: {}", a.label_ja());
         }
         pressed
     }
@@ -769,7 +769,7 @@ fn set_thumbnail_icon(lib: &OpenVrLibrary, thumbnail_handle: VrOverlayHandle) {
     let path = match manifest::write_icon_in(&dir) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[SteamVR] {}", e);
+            crate::log!("[SteamVR] {}", e);
             return;
         }
     };
@@ -778,7 +778,7 @@ fn set_thumbnail_icon(lib: &OpenVrLibrary, thumbnail_handle: VrOverlayHandle) {
     };
     let err = unsafe { (lib.overlay().set_overlay_from_file)(thumbnail_handle, cpath.as_ptr()) };
     if err != 0 {
-        eprintln!("[SteamVR] タブのアイコン設定失敗: EVROverlayError={}", err);
+        crate::log!("[SteamVR] タブのアイコン設定失敗: EVROverlayError={}", err);
     }
 }
 

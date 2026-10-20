@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-10-20
+
+### Added
+
+- ログを `%APPDATA%\vrc-companion\vrc-companion.log` に時刻付きで書く（どう起動しても残る）。前回の分は `vrc-companion.log.1` に残る。1MB を超えたらそこで回す
+
 ## [0.6.2] - 2026-10-20
 
 ### Added

@@ -86,7 +86,7 @@ fn write_manifest_in(
     let image_path = match write_icon_in(dir) {
         Ok(p) => Some(p.to_string_lossy().into_owned()),
         Err(e) => {
-            eprintln!("[SteamVR] {}", e);
+            crate::log!("[SteamVR] {}", e);
             None
         }
     };
