@@ -1003,7 +1003,7 @@ fn avatar_settings_ui(ui: &mut egui::Ui, draft: &mut [AvatarButton; 4]) -> bool 
                     ui.add_space(8.0);
                     ui.add(
                         egui::TextEdit::singleline(&mut b.param)
-                            .hint_text("パラメーター名")
+                            .hint_text("パラメーター名（例: Hat）")
                             .font(egui::FontId::proportional(17.0))
                             .desired_width(200.0),
                     );

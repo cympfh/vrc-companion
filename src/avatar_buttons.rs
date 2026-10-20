@@ -93,13 +93,35 @@ pub fn parse_value(kind: ParamType, s: &str) -> Result<OscType, String> {
     }
 }
 
-/// パラメーター名を確かめる。OSC のアドレスに使えない文字(空白と # * , ? [ ] { })は不可
-pub fn check_param(name: &str) -> Result<(), String> {
-    if name.is_empty() {
+const PREFIX: &str = "/avatar/parameters/";
+
+/// 入力からパラメーター名だけを取り出す。先頭の / はあってもなくてもよく、
+/// `/avatar/parameters/`(先頭の / なしも可)で始まっていればアドレスまるごととみなす
+fn param_name(input: &str) -> &str {
+    let s = input.strip_prefix('/').unwrap_or(input);
+    s.strip_prefix(&PREFIX[1..]).unwrap_or(s)
+}
+
+/// 送るアドレス(必ず `/avatar/parameters/<名前>`)
+pub fn address(input: &str) -> String {
+    format!("{}{}", PREFIX, param_name(input.trim()))
+}
+
+/// パラメーター名を確かめる(空は「未設定」なので可)。
+/// OSC のアドレスに使えない文字(空白と # * , ? [ ] { })、末尾の /、// は不可
+pub fn check_param(input: &str) -> Result<(), String> {
+    if input.is_empty() {
         return Ok(());
     }
-    if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
-        return Err("名前の先頭・末尾に / は付けない".to_string());
+    let name = param_name(input);
+    if name.is_empty() {
+        return Err("/avatar/parameters/ のあとに名前を書く".to_string());
+    }
+    if name.ends_with('/') {
+        return Err("末尾に / は付けない".to_string());
+    }
+    if name.starts_with('/') || name.contains("//") {
+        return Err("/ を2つ続けない".to_string());
     }
     if name
         .chars()
@@ -139,7 +161,7 @@ impl AvatarButton {
             return None;
         }
         let v = parse_value(self.kind, if on { &self.on } else { &self.off }).ok()?;
-        Some((format!("/avatar/parameters/{}", self.param.trim()), v))
+        Some((address(&self.param), v))
     }
 }
 
@@ -197,10 +219,39 @@ mod tests {
     }
 
     #[test]
+    fn address_accepts_name_leading_slash_or_full_address() {
+        for input in [
+            "Hat",
+            "/Hat",
+            "avatar/parameters/Hat",
+            "/avatar/parameters/Hat",
+            " /Hat ",
+        ] {
+            assert!(check_param(input.trim()).is_ok(), "{input:?}");
+            assert_eq!(address(input), "/avatar/parameters/Hat", "{input:?}");
+        }
+        assert_eq!(address("Clothing/Hat"), "/avatar/parameters/Clothing/Hat");
+        assert_eq!(
+            address("/avatar/parameters/Clothing/Hat"),
+            "/avatar/parameters/Clothing/Hat"
+        );
+        let b = btn("/avatar/parameters/Hat", ParamType::Bool, "true", "false");
+        assert_eq!(
+            b.message(true),
+            Some(("/avatar/parameters/Hat".into(), OscType::Bool(true)))
+        );
+    }
+
+    #[test]
     fn param_names_are_checked() {
         assert!(check_param("Clothing/Hat").is_ok());
         assert!(check_param("").is_ok());
-        for bad in ["a b", "/Hat", "Hat/", "a#b", "a*", "x?", "a\nb", "a//b"] {
+        assert_eq!(check_param("Hat/"), Err("末尾に / は付けない".into()));
+        assert_eq!(check_param("/Hat/"), Err("末尾に / は付けない".into()));
+        assert_eq!(check_param("//Hat"), Err("/ を2つ続けない".into()));
+        assert!(check_param("/avatar/parameters/").is_err());
+        assert!(check_param("/avatar/parameters//Hat").is_err());
+        for bad in ["a b", "Hat/", "a#b", "a*", "x?", "a\nb", "a//b", "/"] {
             assert!(check_param(bad).is_err(), "{bad:?}");
         }
         assert!(btn("Hat", ParamType::Int, "300", "0").error().is_some());
