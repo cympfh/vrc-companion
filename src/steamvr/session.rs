@@ -757,7 +757,29 @@ fn create_dashboard_overlay(lib: &OpenVrLibrary) -> Result<VrOverlayHandle, Dash
     if err != 0 {
         return Err(DashboardError::Other(format!("EVROverlayError={}", err)));
     }
+    set_thumbnail_icon(lib, thumbnail_handle);
     Ok(main_handle)
+}
+
+/// ダッシュボード下段のタブのアイコン(サムネイル)にロゴを出す。失敗してもタブは使えるので報告だけ
+fn set_thumbnail_icon(lib: &OpenVrLibrary, thumbnail_handle: VrOverlayHandle) {
+    let Some(dir) = dirs::config_dir().map(|d| d.join("vrc-companion")) else {
+        return;
+    };
+    let path = match manifest::write_icon_in(&dir) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[SteamVR] {}", e);
+            return;
+        }
+    };
+    let Ok(cpath) = CString::new(path.to_string_lossy().into_owned()) else {
+        return;
+    };
+    let err = unsafe { (lib.overlay().set_overlay_from_file)(thumbnail_handle, cpath.as_ptr()) };
+    if err != 0 {
+        eprintln!("[SteamVR] タブのアイコン設定失敗: EVROverlayError={}", err);
+    }
 }
 
 fn show_overlay(lib: &OpenVrLibrary, handle: VrOverlayHandle) -> Result<(), String> {

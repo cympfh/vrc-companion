@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-10-20
+
+### Added
+
+- ロゴ。README の先頭、Windows のアプリのアイコン（exe・ウィンドウ・タスクバー）、SteamVR のダッシュボードのタブとアプリ一覧のアイコンに出る
+
 ## [0.6.1] - 2026-10-20
 
 ### Fixed

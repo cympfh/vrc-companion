@@ -1,6 +1,6 @@
 [package]
 name = "vrc-companion"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 
 [dependencies]
@@ -30,3 +30,6 @@ windows-sys = { version = "0.59", features = [
 libloading = "0.8"
 glow = "0.14"
 egui_glow = "0.29"
+
+[build-dependencies]
+embed-resource = "3"

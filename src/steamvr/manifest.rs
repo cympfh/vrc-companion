@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 pub const APP_KEY: &str = "cympfh.vrc_companion";
 const APP_NAME: &str = "VRC Companion";
 const MANIFEST_FILE_NAME: &str = "vrc-companion.vrmanifest";
+const ICON_FILE_NAME: &str = "vrc-companion-icon.png";
+/// ロゴ(assets/logo.png, 256x256)。SteamVR のアプリ一覧・ダッシュボードのタブのアイコンに使う
+pub const ICON_PNG: &[u8] = include_bytes!("../../assets/logo.png");
 
 /// OpenVRのアプリケーションマニフェストJSONを組み立てる純粋関数。
 /// `action_manifest_path` は SteamVR Input のアクションマニフェスト(input_manifest.rs)。
@@ -23,6 +26,7 @@ pub fn build_manifest_json(
     name: &str,
     exe_path: &str,
     action_manifest_path: Option<&str>,
+    image_path: Option<&str>,
 ) -> String {
     let mut json = serde_json::json!({
         "source": "custom",
@@ -43,7 +47,18 @@ pub fn build_manifest_json(
     if let Some(path) = action_manifest_path {
         json["applications"][0]["action_manifest_path"] = path.into();
     }
+    if let Some(path) = image_path {
+        json["applications"][0]["image_path"] = path.into();
+    }
     json.to_string()
+}
+
+/// アイコン PNG を `dir` に書き、そのフルパスを返す。SteamVR はファイルのパスでしか受け取らない
+pub fn write_icon_in(dir: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("config dir作成失敗: {}", e))?;
+    let path = dir.join(ICON_FILE_NAME);
+    std::fs::write(&path, ICON_PNG).map_err(|e| format!("アイコン書き込み失敗: {}", e))?;
+    Ok(path)
 }
 
 /// マニフェストを自身の config dir(%APPDATA%\vrc-companion)に書き込み、そのフルパスを返す。
@@ -68,7 +83,20 @@ fn write_manifest_in(
     action_manifest_path: Option<&Path>,
 ) -> Result<PathBuf, String> {
     let action_manifest_path = action_manifest_path.map(|p| p.to_string_lossy().into_owned());
-    let json = build_manifest_json(APP_KEY, APP_NAME, exe_path, action_manifest_path.as_deref());
+    let image_path = match write_icon_in(dir) {
+        Ok(p) => Some(p.to_string_lossy().into_owned()),
+        Err(e) => {
+            eprintln!("[SteamVR] {}", e);
+            None
+        }
+    };
+    let json = build_manifest_json(
+        APP_KEY,
+        APP_NAME,
+        exe_path,
+        action_manifest_path.as_deref(),
+        image_path.as_deref(),
+    );
     std::fs::create_dir_all(dir).map_err(|e| format!("config dir作成失敗: {}", e))?;
     let manifest_path = dir.join(MANIFEST_FILE_NAME);
     std::fs::write(&manifest_path, json).map_err(|e| format!("マニフェスト書き込み失敗: {}", e))?;
@@ -80,8 +108,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_icon_png_is_256_square_png() {
+        assert_eq!(&ICON_PNG[..8], b"\x89PNG\r\n\x1a\n");
+        let w = u32::from_be_bytes(ICON_PNG[16..20].try_into().unwrap());
+        let h = u32::from_be_bytes(ICON_PNG[20..24].try_into().unwrap());
+        assert_eq!((w, h), (256, 256));
+    }
+
+    #[test]
     fn test_build_manifest_json_contains_app_key_name_and_path() {
-        let json = build_manifest_json("test.app_key", "Test App", r"C:\path\to\app.exe", None);
+        let json = build_manifest_json("test.app_key", "Test App", r"C:\path\to\app.exe", None, None);
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let app = &parsed["applications"][0];
         assert_eq!(app["app_key"], "test.app_key");
@@ -90,6 +126,7 @@ mod tests {
         assert_eq!(app["is_dashboard_overlay"], true);
         assert_eq!(app["strings"]["en_us"]["name"], "Test App");
         assert!(app.get("action_manifest_path").is_none());
+        assert!(app.get("image_path").is_none());
     }
 
     #[test]
@@ -99,12 +136,14 @@ mod tests {
             "Test App",
             r"C:\path\to\app.exe",
             Some(r"C:\cfg\steamvr_input\actions.json"),
+            Some(r"C:\cfg\icon.png"),
         );
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(
             parsed["applications"][0]["action_manifest_path"],
             r"C:\cfg\steamvr_input\actions.json"
         );
+        assert_eq!(parsed["applications"][0]["image_path"], r"C:\cfg\icon.png");
     }
 
     #[test]
@@ -117,6 +156,8 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["applications"][0]["app_key"], APP_KEY);
+        let icon = parsed["applications"][0]["image_path"].as_str().unwrap();
+        assert_eq!(std::fs::read(icon).unwrap(), ICON_PNG);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

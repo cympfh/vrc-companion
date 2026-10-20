@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.svg" width="128" alt="VRC Companion"></p>
+
 # VRC Companion
 
 VRChat で遊んでるときにあると便利なあれこれ

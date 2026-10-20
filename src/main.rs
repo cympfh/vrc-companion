@@ -33,7 +33,12 @@ fn main() -> eframe::Result<()> {
     let config = Config::load();
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([380.0, 680.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([380.0, 680.0])
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/logo.png"))
+                    .expect("assets/logo.png"),
+            ),
         ..Default::default()
     };
 

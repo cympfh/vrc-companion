@@ -200,7 +200,8 @@ pub struct VrIvOverlayFnTable {
     pub clear_overlay_texture: PlaceholderFn,
     pub set_overlay_raw:
         unsafe extern "C" fn(VrOverlayHandle, *mut c_void, u32, u32, u32) -> EVROverlayError,
-    pub set_overlay_from_file: PlaceholderFn,
+    pub set_overlay_from_file:
+        unsafe extern "C" fn(VrOverlayHandle, *const c_char) -> EVROverlayError,
     pub get_overlay_texture: PlaceholderFn,
     pub release_native_overlay_handle: PlaceholderFn,
     pub get_overlay_texture_size: PlaceholderFn,
