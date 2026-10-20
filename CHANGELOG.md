@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ログを `%APPDATA%\vrc-companion\vrc-companion.log` に時刻付きで書く（どう起動しても残る）。前回の分は `vrc-companion.log.1` に残る。1MB を超えたらそこで回す
 
+### Changed
+
+- アイコン PNG は中身が同じなら書き直さない。書けなくても前のファイルがあればアプリ一覧のアイコンに使う
+
 ## [0.6.2] - 2026-10-20
 
 ### Added

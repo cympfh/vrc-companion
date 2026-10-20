@@ -53,11 +53,27 @@ pub fn build_manifest_json(
     json.to_string()
 }
 
+/// アイコン PNG の置き場所(`dir` は %APPDATA%\vrc-companion)
+pub fn icon_path_in(dir: &Path) -> PathBuf {
+    dir.join(ICON_FILE_NAME)
+}
+
 /// アイコン PNG を `dir` に書き、そのフルパスを返す。SteamVR はファイルのパスでしか受け取らない
 pub fn write_icon_in(dir: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("config dir作成失敗: {}", e))?;
-    let path = dir.join(ICON_FILE_NAME);
-    std::fs::write(&path, ICON_PNG).map_err(|e| format!("アイコン書き込み失敗: {}", e))?;
+    let path = icon_path_in(dir);
+    // 同じ中身ならそのまま(起動ごとにマニフェストとタブの両方から呼ばれる)
+    if std::fs::read(&path).is_ok_and(|b| b == ICON_PNG) {
+        return Ok(path);
+    }
+    if let Err(e) = std::fs::write(&path, ICON_PNG) {
+        // 書けなくても前のファイルが残っていればそれを使う
+        if path.exists() {
+            crate::log!("[SteamVR] アイコン更新失敗(前のファイルを使う): {}", e);
+            return Ok(path);
+        }
+        return Err(format!("アイコン書き込み失敗: {}", e));
+    }
     Ok(path)
 }
 
@@ -106,6 +122,20 @@ fn write_manifest_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_icon_path_and_rewrite_skipped_when_identical() {
+        let dir = std::env::temp_dir().join(format!("vrc-companion-icon-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = write_icon_in(&dir).unwrap();
+        assert_eq!(path, dir.join("vrc-companion-icon.png"));
+        assert_eq!(path, icon_path_in(&dir));
+        let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert_eq!(write_icon_in(&dir).unwrap(), path);
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), mtime);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn test_icon_png_is_256_square_png() {
