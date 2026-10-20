@@ -7,7 +7,7 @@
 //! アプリごと終了する。
 //! 判定の部分は描画先に依存しないので全OSでテストできる。
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// SteamVR が動いている間だけ居るプロセス
 pub const STEAMVR_SERVER_EXE: &str = "vrserver.exe";
@@ -101,6 +101,40 @@ impl StatusLog {
     }
 }
 
+/// 同じ種類のエラーを `every` に 1 回だけログに出す(その間に何回起きたかは次の行に添える)
+pub struct RateLimited {
+    every: Duration,
+    last: Option<Instant>,
+    suppressed: u32,
+}
+
+impl RateLimited {
+    pub fn new(every: Duration) -> Self {
+        Self {
+            every,
+            last: None,
+            suppressed: 0,
+        }
+    }
+
+    /// 出すべきなら、出す文を返す(`now` はテストのため外から渡す)
+    pub fn check(&mut self, now: Instant, message: &str) -> Option<String> {
+        if let Some(last) = self.last
+            && now.duration_since(last) < self.every
+        {
+            self.suppressed += 1;
+            return None;
+        }
+        self.last = Some(now);
+        let n = std::mem::take(&mut self.suppressed);
+        Some(if n == 0 {
+            message.to_string()
+        } else {
+            format!("{} (この間ほかに {} 回)", message, n)
+        })
+    }
+}
+
 /// vrserver.exe が動いているか(プロセス一覧を見るだけで、SteamVR には触らない)
 #[cfg(windows)]
 pub fn steamvr_running() -> bool {
@@ -157,6 +191,23 @@ mod tests {
         assert!(!log.changed("SteamVR の起動を待っています"));
         assert!(log.changed("接続した"));
         assert!(log.changed("SteamVR の起動を待っています"));
+    }
+
+    #[test]
+    fn rate_limited_logs_first_then_once_per_period_with_count() {
+        let t0 = Instant::now();
+        let mut r = RateLimited::new(Duration::from_secs(60));
+        assert_eq!(r.check(t0, "e").as_deref(), Some("e"));
+        assert_eq!(r.check(t0 + Duration::from_secs(1), "e"), None);
+        assert_eq!(r.check(t0 + Duration::from_secs(2), "e"), None);
+        assert_eq!(
+            r.check(t0 + Duration::from_secs(61), "e").as_deref(),
+            Some("e (この間ほかに 2 回)")
+        );
+        assert_eq!(
+            r.check(t0 + Duration::from_secs(200), "e").as_deref(),
+            Some("e")
+        );
     }
 
     #[test]

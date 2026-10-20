@@ -26,7 +26,7 @@ pub fn init() {
     };
     match open_in(&dir) {
         Ok(f) => *LOG.lock().unwrap_or_else(|e| e.into_inner()) = Some(f),
-        Err(e) => eprintln!("ログファイルを開けない: {}", e),
+        Err(e) => to_stderr(&format!("ログファイルを開けない: {}", e)),
     }
 }
 
@@ -53,9 +53,62 @@ fn rotate(path: &Path) {
     }
 }
 
+/// パニックしたら、メッセージと場所(とバックトレース)をログに残す。
+/// stderr はふつう誰も見ていないので、これが無いと落ちた理由が分からない
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let thread = std::thread::current();
+        let msg = panic_line(
+            thread.name().unwrap_or("?"),
+            &payload_message(info.payload()),
+            info.location()
+                .map(|l| format!("{}:{}", l.file(), l.line())),
+        );
+        let bt = std::backtrace::Backtrace::force_capture();
+        let line = format!("{}\n{}", msg, bt);
+        to_stderr(&line);
+        // ログを書いている最中のパニックで固まらないよう、ロックが取れなければ諦める
+        if let Ok(mut guard) = LOG.try_lock()
+            && let Some(log) = guard.as_mut()
+        {
+            let _ = log
+                .file
+                .write_all(format_line(&now_local(), &line).as_bytes());
+        }
+    }));
+}
+
+/// パニックの中身(`panic!` に渡した文字列)を取り出す
+pub fn payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "(不明)".to_string()
+    }
+}
+
+fn panic_line(thread: &str, msg: &str, location: Option<String>) -> String {
+    format!(
+        "[PANIC] スレッド {} が落ちた: {} ({})",
+        thread,
+        msg,
+        location.as_deref().unwrap_or("場所不明")
+    )
+}
+
+/// stderr にも出す。ただし書けなくても無視する。
+/// `eprintln!` は書けないとパニックする。WSL から起動すると、しばらくして stderr の中継
+/// (パイプ)が消えるので、次の 1 行で SteamVR のスレッドがパニックで死に、オーバーレイが
+/// 黙って消えていた(パニックの知らせも同じ stderr に出るので何も残らなかった)
+fn to_stderr(line: &str) {
+    let _ = writeln!(std::io::stderr(), "{}", line);
+}
+
 /// `log!` の中身。stderr と(開いていれば)ログファイルの両方に書く
 pub fn write(msg: &str) {
-    eprintln!("{}", msg);
+    to_stderr(msg);
     let line = format_line(&now_local(), msg);
     let mut guard = LOG.lock().unwrap_or_else(|e| e.into_inner());
     let Some(log) = guard.as_mut() else {
@@ -143,6 +196,23 @@ macro_rules! log {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_panic_line_and_payload() {
+        assert_eq!(
+            panic_line("steamvr", "boom", Some("src/x.rs:3".into())),
+            "[PANIC] スレッド steamvr が落ちた: boom (src/x.rs:3)"
+        );
+        let p = std::panic::catch_unwind(|| panic!("n={}", 5)).unwrap_err();
+        assert_eq!(payload_message(p.as_ref()), "n=5");
+        let p = std::panic::catch_unwind(|| panic!("static")).unwrap_err();
+        assert_eq!(payload_message(p.as_ref()), "static");
+    }
+
+    #[test]
+    fn test_write_without_log_file_does_not_panic() {
+        write("ログファイルなしでも落ちない");
+    }
 
     #[test]
     fn test_format_line() {
