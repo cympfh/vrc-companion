@@ -117,7 +117,13 @@ mod tests {
 
     #[test]
     fn test_build_manifest_json_contains_app_key_name_and_path() {
-        let json = build_manifest_json("test.app_key", "Test App", r"C:\path\to\app.exe", None, None);
+        let json = build_manifest_json(
+            "test.app_key",
+            "Test App",
+            r"C:\path\to\app.exe",
+            None,
+            None,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let app = &parsed["applications"][0];
         assert_eq!(app["app_key"], "test.app_key");
