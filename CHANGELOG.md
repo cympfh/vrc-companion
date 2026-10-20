@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-20
+
+### Fixed
+
+- VR のパネルで、トリガーを押している間にレーザーポインタが少しでも動くと、ボタンやスイッチが押せなかった。押した部品の上で離せば、手ぶれがあってもゆっくり押してもクリックになる
+
 ## [0.6.0] - 2026-10-20
 
 ### Added
