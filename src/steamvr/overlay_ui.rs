@@ -58,7 +58,7 @@ pub fn setup_style(ctx: &egui::Context) {
     ctx.set_style(style);
     // レーザーポインタは押している間も手ぶれで動く。egui の既定(6pt 動いたら、0.8 秒押したら
     // クリックにしない)だと、少しでも動くとクリックが消える。このパネルにはドラッグもスクロールも
-    // 長押しも無いので、押した部品の上で離せばクリックにする(外で離したら何もしない)。
+    // 長押しも無いので、押した部品の上で離せばクリックにする(外で離したら何もしない: `released_on`)。
     ctx.options_mut(|o| {
         o.input_options.max_click_dist = f32::INFINITY;
         o.input_options.max_click_duration = f64::INFINITY;
@@ -258,7 +258,7 @@ fn small_button(ui: &mut egui::Ui, id: &str, rect: Rect, label: &str) -> bool {
         FontId::proportional(14.0),
         color::SUBTEXT,
     );
-    resp.clicked()
+    released_on(&resp)
 }
 
 /// 丸い A/B/X/Y ボタン。オンは青く塗って光の輪、オフは暗い地に枠線、未設定は薄く押せない
@@ -300,7 +300,16 @@ fn avatar_button(ui: &mut egui::Ui, i: usize, rect: Rect, view: AvatarButtonView
         FontId::proportional(24.0),
         if view.on { Color32::WHITE } else { color::TEXT },
     );
+    released_on(&resp)
+}
+
+/// 押した部品の上で離したときだけ true(手ぶれは許すが、外へ動かして離したら押さない)
+fn released_on(resp: &egui::Response) -> bool {
     resp.clicked()
+        && resp
+            .ctx
+            .input(|i| i.pointer.interact_pos())
+            .is_some_and(|p| resp.rect.contains(p))
 }
 
 /// 押されたら true。押している間・指している間は色が変わる。
@@ -327,7 +336,7 @@ fn big_button(
         FontId::proportional(22.0),
         text,
     );
-    resp.clicked()
+    released_on(&resp)
 }
 
 fn card(ui: &egui::Ui, rect: Rect) {
@@ -416,7 +425,7 @@ fn toggle_card(
             pos2(row.right() - 12.0 - 44.0, row.center().y - 13.0),
             on,
         );
-        if resp.clicked() {
+        if released_on(&resp) {
             clicked.push(field.action);
         }
         targets.push(HitTarget {
