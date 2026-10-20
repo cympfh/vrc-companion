@@ -26,7 +26,7 @@ pub fn init() {
     };
     match open_in(&dir) {
         Ok(f) => *LOG.lock().unwrap_or_else(|e| e.into_inner()) = Some(f),
-        Err(e) => eprintln!("ログファイルを開けない: {}", e),
+        Err(e) => to_stderr(&format!("ログファイルを開けない: {}", e)),
     }
 }
 
@@ -66,7 +66,7 @@ pub fn install_panic_hook() {
         );
         let bt = std::backtrace::Backtrace::force_capture();
         let line = format!("{}\n{}", msg, bt);
-        eprintln!("{}", line);
+        to_stderr(&line);
         // ログを書いている最中のパニックで固まらないよう、ロックが取れなければ諦める
         if let Ok(mut guard) = LOG.try_lock()
             && let Some(log) = guard.as_mut()
@@ -98,9 +98,17 @@ fn panic_line(thread: &str, msg: &str, location: Option<String>) -> String {
     )
 }
 
+/// stderr にも出す。ただし書けなくても無視する。
+/// `eprintln!` は書けないとパニックする。WSL から起動すると、しばらくして stderr の中継
+/// (パイプ)が消えるので、次の 1 行で SteamVR のスレッドがパニックで死に、オーバーレイが
+/// 黙って消えていた(パニックの知らせも同じ stderr に出るので何も残らなかった)
+fn to_stderr(line: &str) {
+    let _ = writeln!(std::io::stderr(), "{}", line);
+}
+
 /// `log!` の中身。stderr と(開いていれば)ログファイルの両方に書く
 pub fn write(msg: &str) {
-    eprintln!("{}", msg);
+    to_stderr(msg);
     let line = format_line(&now_local(), msg);
     let mut guard = LOG.lock().unwrap_or_else(|e| e.into_inner());
     let Some(log) = guard.as_mut() else {
@@ -199,6 +207,11 @@ mod tests {
         assert_eq!(payload_message(p.as_ref()), "n=5");
         let p = std::panic::catch_unwind(|| panic!("static")).unwrap_err();
         assert_eq!(payload_message(p.as_ref()), "static");
+    }
+
+    #[test]
+    fn test_write_without_log_file_does_not_panic() {
+        write("ログファイルなしでも落ちない");
     }
 
     #[test]
