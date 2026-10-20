@@ -135,7 +135,7 @@ fn build_input_stream(
     chunk_size: usize,
 ) -> Result<cpal::Stream, String> {
     let stream_config: cpal::StreamConfig = config.clone().into();
-    let err_fn = |err| eprintln!("An error occurred on the audio stream: {}", err);
+    let err_fn = |err| crate::log!("An error occurred on the audio stream: {}", err);
     let mut local_chunk: Vec<f32> = Vec::with_capacity(chunk_size);
 
     macro_rules! build {

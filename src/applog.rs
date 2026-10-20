@@ -1,0 +1,180 @@
+//! 自前のログファイル %APPDATA%\vrc-companion\vrc-companion.log。
+//! どう起動されても(ダブルクリック・SteamVR の自動起動・WSL)stderr が見えないので、
+//! `log!` で出したものは時刻付きでこのファイルにも書く。前回の分は .log.1 に 1 世代だけ残し、
+//! 1 回の起動で MAX_BYTES を超えたらそこでも回す。秘密(API キーなど)はここに渡さないこと。
+
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+const FILE_NAME: &str = "vrc-companion.log";
+const MAX_BYTES: u64 = 1024 * 1024;
+
+struct LogFile {
+    path: PathBuf,
+    file: File,
+    written: u64,
+}
+
+static LOG: Mutex<Option<LogFile>> = Mutex::new(None);
+
+/// 起動時に 1 回呼ぶ。失敗してもアプリは動かす(stderr にだけ出る)
+pub fn init() {
+    let Some(dir) = dirs::config_dir().map(|d| d.join("vrc-companion")) else {
+        return;
+    };
+    match open_in(&dir) {
+        Ok(f) => *LOG.lock().unwrap_or_else(|e| e.into_inner()) = Some(f),
+        Err(e) => eprintln!("ログファイルを開けない: {}", e),
+    }
+}
+
+/// 前回のログを .1 に回して、新しいログを開く
+fn open_in(dir: &Path) -> std::io::Result<LogFile> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(FILE_NAME);
+    rotate(&path);
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)?;
+    Ok(LogFile {
+        path,
+        file,
+        written: 0,
+    })
+}
+
+fn rotate(path: &Path) {
+    if path.exists() {
+        let _ = std::fs::rename(path, path.with_extension("log.1"));
+    }
+}
+
+/// `log!` の中身。stderr と(開いていれば)ログファイルの両方に書く
+pub fn write(msg: &str) {
+    eprintln!("{}", msg);
+    let line = format_line(&now_local(), msg);
+    let mut guard = LOG.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(log) = guard.as_mut() else {
+        return;
+    };
+    if log.written + line.len() as u64 > MAX_BYTES {
+        let dir = log.path.parent().map(Path::to_path_buf);
+        *guard = dir.and_then(|d| open_in(&d).ok());
+    }
+    if let Some(log) = guard.as_mut()
+        && log.file.write_all(line.as_bytes()).is_ok()
+    {
+        log.written += line.len() as u64;
+    }
+}
+
+/// (年, 月, 日, 時, 分, 秒, ミリ秒)
+type Stamp = (u16, u16, u16, u16, u16, u16, u16);
+
+fn format_line(t: &Stamp, msg: &str) -> String {
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03} {}\n",
+        t.0, t.1, t.2, t.3, t.4, t.5, t.6, msg
+    )
+}
+
+#[cfg(windows)]
+fn now_local() -> Stamp {
+    use windows_sys::Win32::System::SystemInformation::GetLocalTime;
+    let mut st = unsafe { std::mem::zeroed() };
+    unsafe { GetLocalTime(&mut st) };
+    (
+        st.wYear,
+        st.wMonth,
+        st.wDay,
+        st.wHour,
+        st.wMinute,
+        st.wSecond,
+        st.wMilliseconds,
+    )
+}
+
+/// Windows 以外(テスト用)は UTC
+#[cfg(not(windows))]
+fn now_local() -> Stamp {
+    let d = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = d.as_secs();
+    let (y, m, day) = civil_from_days((secs / 86400) as i64);
+    let s = secs % 86400;
+    (
+        y as u16,
+        m as u16,
+        day as u16,
+        (s / 3600) as u16,
+        (s / 60 % 60) as u16,
+        (s % 60) as u16,
+        d.subsec_millis() as u16,
+    )
+}
+
+/// 1970-01-01 からの日数 → (年, 月, 日)(Howard Hinnant のアルゴリズム)
+#[cfg(not(windows))]
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + if m <= 2 { 1 } else { 0 }, m, d)
+}
+
+/// `eprintln!` と同じ書き方で、stderr とログファイルに出す
+#[macro_export]
+macro_rules! log {
+    ($($arg:tt)*) => {
+        $crate::applog::write(&format!($($arg)*))
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_line() {
+        let line = format_line(&(2026, 10, 20, 22, 5, 9, 7), "[SteamVR] つないだ");
+        assert_eq!(line, "2026-10-20 22:05:09.007 [SteamVR] つないだ\n");
+    }
+
+    #[test]
+    fn test_open_in_keeps_previous_run_as_dot_1() {
+        let dir = std::env::temp_dir().join(format!("vrc-companion-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut first = open_in(&dir).unwrap();
+        first.file.write_all(b"run1\n").unwrap();
+        drop(first);
+        let mut second = open_in(&dir).unwrap();
+        second.file.write_all(b"run2\n").unwrap();
+        drop(second);
+        assert_eq!(
+            std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(),
+            "run2\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("vrc-companion.log.1")).unwrap(),
+            "run1\n"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_civil_from_days() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(20746), (2026, 10, 20));
+    }
+}

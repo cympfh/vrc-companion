@@ -446,7 +446,7 @@ impl OpenVrLibrary {
             vr_get_generic_interface(applications_version.as_ptr(), &mut applications_iface_error)
         };
         let applications_table = if applications_iface_error != 0 || applications_table_ptr == 0 {
-            eprintln!(
+            crate::log!(
                 "[SteamVR] IVRApplications インターフェース取得失敗 (自動起動登録は無効): code={}",
                 applications_iface_error
             );
@@ -466,7 +466,7 @@ impl OpenVrLibrary {
                 input_table = Some(ptr as *const VrIvInputFnTable);
                 break;
             }
-            eprintln!("[SteamVR] {} インターフェース取得失敗: code={}", v, err);
+            crate::log!("[SteamVR] {} インターフェース取得失敗: code={}", v, err);
         }
 
         // IVRSystem は SteamVR の終了(VREvent_Quit)を知るためだけに使う。取れなくても
@@ -477,9 +477,10 @@ impl OpenVrLibrary {
         let system_table = if system_err == 0 && system_ptr != 0 {
             Some(system_ptr as *const VrIvSystemFnTable)
         } else {
-            eprintln!(
+            crate::log!(
                 "[SteamVR] {} インターフェース取得失敗: code={}",
-                IVRSYSTEM_VERSION, system_err
+                IVRSYSTEM_VERSION,
+                system_err
             );
             None
         };

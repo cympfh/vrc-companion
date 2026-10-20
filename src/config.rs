@@ -144,17 +144,17 @@ impl Config {
         match Self::config_path() {
             Ok(path) if path.exists() => match fs::read_to_string(&path) {
                 Ok(content) => serde_json::from_str(&content).unwrap_or_else(|e| {
-                    eprintln!("Failed to parse config: {}", e);
+                    crate::log!("Failed to parse config: {}", e);
                     Self::default()
                 }),
                 Err(e) => {
-                    eprintln!("Failed to read config file: {}", e);
+                    crate::log!("Failed to read config file: {}", e);
                     Self::default()
                 }
             },
             Ok(_) => Self::default(),
             Err(e) => {
-                eprintln!("Failed to get config path: {}", e);
+                crate::log!("Failed to get config path: {}", e);
                 Self::default()
             }
         }

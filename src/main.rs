@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod applog;
 mod audio;
 mod avatar_buttons;
 mod config;
@@ -24,12 +25,14 @@ fn main() -> eframe::Result<()> {
         if let Some(i) = args.iter().position(|a| a == "--dump-overlay") {
             let prefix = args.get(i + 1).map(String::as_str).unwrap_or("overlay");
             if let Err(e) = steamvr::dump_overlay(prefix) {
-                eprintln!("--dump-overlay 失敗: {}", e);
+                crate::log!("--dump-overlay 失敗: {}", e);
                 std::process::exit(1);
             }
             return Ok(());
         }
     }
+    applog::init();
+    crate::log!("[App] vrc-companion {} 起動", env!("CARGO_PKG_VERSION"));
     let config = Config::load();
 
     let options = eframe::NativeOptions {
@@ -103,7 +106,7 @@ struct App {
 impl App {
     fn new(config: Config, egui_ctx: egui::Context) -> Self {
         let mut available_devices = audio::get_input_devices().unwrap_or_else(|e| {
-            eprintln!("Failed to get input devices: {}", e);
+            crate::log!("Failed to get input devices: {}", e);
             vec![]
         });
         available_devices.insert(0, "デフォルト".to_string());
@@ -185,7 +188,7 @@ impl App {
     /// SteamVR が終わってアプリごと閉じるとき。録音を止め(文字起こしの結果は待たない)、
     /// ログを書き切ってからウィンドウを閉じる
     fn exit_with_steamvr(&mut self, ctx: &egui::Context) {
-        eprintln!("[App] SteamVR が終わったので終了する");
+        crate::log!("[App] SteamVR が終わったので終了する");
         if let Some(mut recorder) = self.audio_recorder.take() {
             recorder.stop_recording();
         }
@@ -242,7 +245,7 @@ impl App {
         if self.config.vrchat_enabled && !text.is_empty() {
             let client = vrchat::VRChatClient::new();
             if let Err(e) = client.send_message(&format!("{}{}", USER_PREFIX, text)) {
-                eprintln!("VRChat OSC error: {}", e);
+                crate::log!("VRChat OSC error: {}", e);
             }
         }
 
@@ -283,7 +286,7 @@ impl App {
                 (false, false) => auto_input::type_text(&text),
             };
             if let Err(e) = result {
-                eprintln!("Auto-input error: {}", e);
+                crate::log!("Auto-input error: {}", e);
             }
         }
 
@@ -376,7 +379,7 @@ impl App {
                 .reset_changed(&self.config.avatar_buttons, &new);
             self.config.avatar_buttons = new;
             if let Err(e) = self.config.save() {
-                eprintln!("Failed to save config: {}", e);
+                crate::log!("Failed to save config: {}", e);
             }
             self.push_steamvr_snapshot();
         } else if close {
@@ -428,7 +431,7 @@ impl App {
             }
             OverlayAction::CallQvPen => {
                 if let Err(e) = auto_input::call_qvpen() {
-                    eprintln!("call_qvpen error: {}", e);
+                    crate::log!("call_qvpen error: {}", e);
                 }
             }
             // オーバーレイのスレッドが自分で処理するので、ここには来ない
@@ -437,9 +440,9 @@ impl App {
                 if let Some((addr, value)) =
                     self.avatar_states.press(&self.config.avatar_buttons, i)
                 {
-                    eprintln!("[OSC] {} = {:?}", addr, value);
+                    crate::log!("[OSC] {} = {:?}", addr, value);
                     if let Err(e) = vrchat::VRChatClient::new().send_parameter(&addr, value) {
-                        eprintln!("Failed to send avatar parameter: {}", e);
+                        crate::log!("Failed to send avatar parameter: {}", e);
                     }
                 }
             }
@@ -493,11 +496,11 @@ impl eframe::App for App {
                         if let Err(e) =
                             client.send_message(&format!("{}{}", ELIZA_PREFIX, response))
                         {
-                            eprintln!("Failed to send Eliza response to VRChat: {}", e);
+                            crate::log!("Failed to send Eliza response to VRChat: {}", e);
                         }
                     }
                 }
-                Err(e) => eprintln!("Eliza error: {}", e),
+                Err(e) => crate::log!("Eliza error: {}", e),
             }
             self.eliza_response_receiver = None;
             self.push_steamvr_snapshot();
@@ -511,10 +514,10 @@ impl eframe::App for App {
                     self.translated_response = translated.clone();
                     let client = vrchat::VRChatClient::new();
                     if let Err(e) = client.send_message(&format!("{} / {}", original, translated)) {
-                        eprintln!("Failed to send translated message to VRChat: {}", e);
+                        crate::log!("Failed to send translated message to VRChat: {}", e);
                     }
                 }
-                Err(e) => eprintln!("Eliza translate error: {}", e),
+                Err(e) => crate::log!("Eliza translate error: {}", e),
             }
             self.translate_response_receiver = None;
             self.push_steamvr_snapshot();
@@ -530,7 +533,7 @@ impl eframe::App for App {
                 self.apply_steamvr_action(action);
             }
             if let Err(e) = self.config.save() {
-                eprintln!("Failed to save config: {}", e);
+                crate::log!("Failed to save config: {}", e);
             }
             self.push_steamvr_snapshot();
         }
@@ -625,7 +628,7 @@ impl eframe::App for App {
                                     .cloned()
                             };
                             if let Err(e) = self.config.save() {
-                                eprintln!("Failed to save config: {}", e);
+                                crate::log!("Failed to save config: {}", e);
                             }
                             self.show_settings = false;
                         }
@@ -944,7 +947,7 @@ impl eframe::App for App {
                                 if ui.button("📝 call QvPen").clicked()
                                     && let Err(e) = auto_input::call_qvpen()
                                 {
-                                    eprintln!("call_qvpen error: {}", e);
+                                    crate::log!("call_qvpen error: {}", e);
                                 }
                                 ui.add_space(5.0);
                             })
@@ -961,7 +964,7 @@ impl eframe::App for App {
                     || eliza_response_to_vrchat_changed
                 {
                     if let Err(e) = self.config.save() {
-                        eprintln!("Failed to save config: {}", e);
+                        crate::log!("Failed to save config: {}", e);
                     }
                     self.push_steamvr_snapshot();
                 }

@@ -5,6 +5,6 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         embed_resource::compile("assets/app.rc", embed_resource::NONE)
             .manifest_optional()
-            .unwrap();
+            .expect("アイコンを exe に埋め込めない: リソースコンパイラ (x86_64-w64-mingw32-windres か rc.exe) が要る");
     }
 }

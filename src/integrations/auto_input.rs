@@ -5,7 +5,7 @@ use std::time::Duration;
 pub fn call_qvpen() -> Result<(), String> {
     thread::spawn(|| {
         if let Err(e) = call_qvpen_sync() {
-            eprintln!("call_qvpen failed: {}", e);
+            crate::log!("call_qvpen failed: {}", e);
         }
     });
     Ok(())
@@ -50,7 +50,7 @@ pub fn type_text(text: &str) -> Result<(), String> {
     let text_owned = text.to_string();
     thread::spawn(move || {
         if let Err(e) = type_text_sync(&text_owned) {
-            eprintln!("Auto-input failed: {}", e);
+            crate::log!("Auto-input failed: {}", e);
         }
     });
     Ok(())
@@ -60,7 +60,7 @@ pub fn type_text(text: &str) -> Result<(), String> {
 pub fn send_ctrl_v() -> Result<(), String> {
     thread::spawn(move || {
         if let Err(e) = send_ctrl_v_sync() {
-            eprintln!("Auto-input (Ctrl+V) failed: {}", e);
+            crate::log!("Auto-input (Ctrl+V) failed: {}", e);
         }
     });
     Ok(())
@@ -70,7 +70,7 @@ pub fn send_ctrl_v() -> Result<(), String> {
 pub fn send_ctrl_v_with_enter() -> Result<(), String> {
     thread::spawn(move || {
         if let Err(e) = send_ctrl_v_with_enter_sync() {
-            eprintln!("Auto-input (Ctrl+V + Enter) failed: {}", e);
+            crate::log!("Auto-input (Ctrl+V + Enter) failed: {}", e);
         }
     });
     Ok(())
@@ -81,7 +81,7 @@ pub fn type_text_with_enter(text: &str) -> Result<(), String> {
     let text_owned = text.to_string();
     thread::spawn(move || {
         if let Err(e) = type_text_with_enter_sync(&text_owned) {
-            eprintln!("Auto-input (typing + Enter) failed: {}", e);
+            crate::log!("Auto-input (typing + Enter) failed: {}", e);
         }
     });
     Ok(())
