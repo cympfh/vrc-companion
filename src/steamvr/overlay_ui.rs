@@ -57,8 +57,8 @@ pub fn setup_style(ctx: &egui::Context) {
     style.interaction.selectable_labels = false;
     ctx.set_style(style);
     // レーザーポインタは押している間も手ぶれで動く。egui の既定(6pt 動いたら、0.8 秒押したら
-    // クリックにしない)だと、少しでも動くとクリックが消える。このパネルにはドラッグもスクロールも
-    // 長押しも無いので、押した部品の上で離せばクリックにする(外で離したら何もしない: `released_on`)。
+    // クリックにしない)だと、少しでも動くとクリックが消える。ボタンには長押しもドラッグも無いので、
+    // 押した部品の上で離せばクリックにする。認識結果のカードだけは押したまま動かすとスクロールする(外で離したら何もしない: `released_on`)。
     ctx.options_mut(|o| {
         o.input_options.max_click_dist = f32::INFINITY;
         o.input_options.max_click_duration = f64::INFINITY;
@@ -452,24 +452,116 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
 }
 
-/// 最後の認識結果と、Eliza の返事 / 翻訳結果(今までと同じ出し分け)
-fn text_card(ui: &egui::Ui, snapshot: &OverlaySnapshot, rect: Rect) {
+/// 認識結果カードの中身(見出し, 本文)。Eliza の返事 / 翻訳結果は今までと同じ出し分け
+fn text_sections(snapshot: &OverlaySnapshot) -> Vec<(&'static str, &str)> {
+    let mut sections = vec![("Transcribed", snapshot.last_transcription.as_str())];
+    if snapshot.eliza_enabled && !snapshot.last_eliza_response.is_empty() {
+        sections.push(("Eliza", snapshot.last_eliza_response.as_str()));
+    } else if snapshot.auto_translate_enabled && !snapshot.last_translated_response.is_empty() {
+        sections.push(("翻訳結果", snapshot.last_translated_response.as_str()));
+    }
+    sections
+}
+
+/// スクロール位置を 0〜(中身の高さ − 見える高さ) に収める
+fn clamp_scroll(offset: f32, content_h: f32, view_h: f32) -> f32 {
+    offset.clamp(0.0, (content_h - view_h).max(0.0))
+}
+
+/// テキストカードのスクロール状態(フレームをまたいで egui のメモリに置く)
+#[derive(Clone, Default)]
+struct TextScroll {
+    offset: f32,
+    /// 中身が変わったら先頭に戻すための目印
+    key: u64,
+    /// 前のフレームで押していたか(離したときにログを出す)
+    dragging: bool,
+}
+
+/// 最後の認識結果と、Eliza の返事 / 翻訳結果。長いときは押したまま上下に動かすとスクロールする
+/// (省略せず全部出す)。
+fn text_card(ui: &mut egui::Ui, snapshot: &OverlaySnapshot, rect: Rect) {
     if rect.height() < 40.0 {
         return;
     }
     card(ui, rect);
-    // (見出し, 本文, 最大の行数)。入りきらない分は「…」で切る
-    let mut sections: Vec<(&str, &str, usize)> =
-        vec![("Transcribed", snapshot.last_transcription.as_str(), 2)];
-    if snapshot.eliza_enabled && !snapshot.last_eliza_response.is_empty() {
-        sections.push(("Eliza", snapshot.last_eliza_response.as_str(), 3));
-    } else if snapshot.auto_translate_enabled && !snapshot.last_translated_response.is_empty() {
-        sections.push(("翻訳結果", snapshot.last_translated_response.as_str(), 3));
-    }
-    let p = ui.painter_at(rect.shrink(2.0));
+    let sections = text_sections(snapshot);
     let wrap = rect.width() - 40.0;
-    let mut y = rect.top() + 14.0;
-    for (caption, body, max_rows) in sections {
+    // 先に全部レイアウトして高さを測る
+    let laid: Vec<(&str, std::sync::Arc<egui::Galley>, Color32)> = sections
+        .iter()
+        .map(|(caption, body)| {
+            let (text, col) = if body.is_empty() {
+                ("—", color::SUBTEXT)
+            } else {
+                (*body, color::TEXT)
+            };
+            let mut job = LayoutJob::single_section(
+                text.to_string(),
+                TextFormat {
+                    font_id: FontId::proportional(17.0),
+                    color: col,
+                    ..Default::default()
+                },
+            );
+            job.wrap = TextWrapping {
+                max_width: wrap,
+                max_rows: usize::MAX,
+                break_anywhere: false,
+                overflow_character: None,
+            };
+            (*caption, ui.fonts(|f| f.layout_job(job)), col)
+        })
+        .collect();
+    let content_h: f32 = 14.0
+        + laid
+            .iter()
+            .map(|(_, g, _)| 24.0 + g.size().y + 12.0)
+            .sum::<f32>();
+    let view = rect.shrink(2.0);
+    let view_h = view.height();
+
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        sections.hash(&mut h);
+        h.finish()
+    };
+    let id = ui.id().with("text_scroll");
+    let mut st: TextScroll = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_default();
+    if st.key != key {
+        st = TextScroll {
+            key,
+            ..Default::default()
+        };
+    }
+    let resp = ui.interact(rect, id, Sense::drag());
+    let down = resp.is_pointer_button_down_on();
+    if down {
+        st.offset -= ui.ctx().input(|i| i.pointer.delta().y);
+    }
+    if resp.hovered() {
+        st.offset -= ui.ctx().input(|i| i.smooth_scroll_delta.y);
+    }
+    st.offset = clamp_scroll(st.offset, content_h, view_h);
+    if st.dragging && !down && content_h > view_h {
+        crate::log!(
+            "[SteamVR] テキストをスクロール: {:.0}/{:.0} (中身 {:.0}, 表示 {:.0})",
+            st.offset,
+            (content_h - view_h).max(0.0),
+            content_h,
+            view_h
+        );
+    }
+    st.dragging = down;
+    let offset = st.offset;
+    #[cfg(test)]
+    TEXT_SCROLL_PROBE.with(|c| c.set(offset));
+    ui.ctx().data_mut(|d| d.insert_temp(id, st));
+
+    let p = ui.painter_at(view);
+    let mut y = rect.top() + 14.0 - offset;
+    for (caption, g, col) in laid {
         p.text(
             pos2(rect.left() + 20.0, y + 9.0),
             egui::Align2::LEFT_CENTER,
@@ -478,30 +570,32 @@ fn text_card(ui: &egui::Ui, snapshot: &OverlaySnapshot, rect: Rect) {
             color::CAPTION,
         );
         y += 24.0;
-        let (text, col) = if body.is_empty() {
-            ("—", color::SUBTEXT)
-        } else {
-            (body, color::TEXT)
-        };
-        let mut job = LayoutJob::single_section(
-            text.to_string(),
-            TextFormat {
-                font_id: FontId::proportional(17.0),
-                color: col,
-                ..Default::default()
-            },
-        );
-        job.wrap = TextWrapping {
-            max_width: wrap,
-            max_rows,
-            break_anywhere: false,
-            overflow_character: Some('…'),
-        };
-        let g = ui.fonts(|f| f.layout_job(job));
         let h = g.size().y;
         p.galley(pos2(rect.left() + 20.0, y), g, col);
         y += h + 12.0;
     }
+    // 入りきらないときだけ右端に細いスクロールバー
+    if content_h > view_h {
+        let track = Rect::from_min_max(
+            pos2(rect.right() - 10.0, rect.top() + 10.0),
+            pos2(rect.right() - 6.0, rect.bottom() - 10.0),
+        );
+        let thumb_h = (track.height() * view_h / content_h).max(24.0);
+        let t = offset / (content_h - view_h);
+        let top = track.top() + (track.height() - thumb_h) * t;
+        p.rect_filled(track, Rounding::same(2.0), Color32::from_white_alpha(12));
+        p.rect_filled(
+            Rect::from_min_size(pos2(track.left(), top), vec2(track.width(), thumb_h)),
+            Rounding::same(2.0),
+            Color32::from_white_alpha(70),
+        );
+    }
+}
+
+/// テストから今のスクロール位置を見る
+#[cfg(test)]
+thread_local! {
+    static TEXT_SCROLL_PROBE: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
 }
 
 #[cfg(test)]
@@ -795,5 +889,87 @@ mod tests {
         assert!(targets.iter().all(|t| !t.rect.contains(away)));
         let clicked = jittery_click(&ctx, &s, c, &[vec2(20.0, -40.0)], away, 0.3);
         assert!(clicked.is_empty(), "{clicked:?}");
+    }
+
+    fn long_snapshot() -> OverlaySnapshot {
+        let mut s = snapshot();
+        s.eliza_enabled = true;
+        s.last_transcription = "とても長い書き起こしです。".repeat(20);
+        s.last_eliza_response = "Eliza のとても長い返事です。".repeat(30);
+        s
+    }
+
+    /// 認識結果カードの真ん中を押して、上に `dy` ずつ `steps` 回動かして離す
+    fn drag_text(
+        ctx: &egui::Context,
+        s: &OverlaySnapshot,
+        dy: f32,
+        steps: usize,
+    ) -> Vec<OverlayAction> {
+        let start = pos2(200.0, LOGICAL_H - 80.0);
+        let moves: Vec<egui::Vec2> = (1..=steps).map(|k| vec2(0.0, -dy * k as f32)).collect();
+        let end = start + vec2(0.0, -dy * steps as f32);
+        jittery_click(ctx, s, start, &moves, end, 0.5)
+    }
+
+    #[test]
+    fn clamp_scroll_stays_in_range() {
+        assert_eq!(clamp_scroll(-5.0, 300.0, 100.0), 0.0);
+        assert_eq!(clamp_scroll(50.0, 300.0, 100.0), 50.0);
+        assert_eq!(clamp_scroll(999.0, 300.0, 100.0), 200.0);
+        // 入りきるときは動かない
+        assert_eq!(clamp_scroll(30.0, 80.0, 100.0), 0.0);
+    }
+
+    #[test]
+    fn long_text_scrolls_by_dragging_and_stops_at_the_end() {
+        let ctx = egui::Context::default();
+        setup_style(&ctx);
+        let s = long_snapshot();
+        frame(&ctx, &s, vec![]);
+        let clicked = drag_text(&ctx, &s, 10.0, 6);
+        assert!(
+            clicked.is_empty(),
+            "スクロールでボタンが押された: {clicked:?}"
+        );
+        let after = TEXT_SCROLL_PROBE.with(|c| c.get());
+        assert!(after > 40.0, "スクロールしていない: {after}");
+        // たくさん動かしても末尾で止まる
+        drag_text(&ctx, &s, 100.0, 30);
+        let max = TEXT_SCROLL_PROBE.with(|c| c.get());
+        drag_text(&ctx, &s, 100.0, 5);
+        assert_eq!(TEXT_SCROLL_PROBE.with(|c| c.get()), max);
+        assert!(max > after);
+    }
+
+    #[test]
+    fn short_text_does_not_scroll_and_new_text_goes_back_to_top() {
+        let ctx = egui::Context::default();
+        setup_style(&ctx);
+        let s = snapshot();
+        frame(&ctx, &s, vec![]);
+        drag_text(&ctx, &s, 10.0, 6);
+        assert_eq!(TEXT_SCROLL_PROBE.with(|c| c.get()), 0.0);
+        let mut long = long_snapshot();
+        frame(&ctx, &long, vec![]);
+        drag_text(&ctx, &long, 10.0, 6);
+        assert!(TEXT_SCROLL_PROBE.with(|c| c.get()) > 0.0);
+        long.last_eliza_response.push_str("新しい返事");
+        frame(&ctx, &long, vec![]);
+        assert_eq!(TEXT_SCROLL_PROBE.with(|c| c.get()), 0.0);
+    }
+
+    #[test]
+    fn buttons_still_click_with_long_text() {
+        let ctx = egui::Context::default();
+        setup_style(&ctx);
+        let s = long_snapshot();
+        let (_, targets) = frame(&ctx, &s, vec![]);
+        assert_eq!(targets.len(), 13);
+        for t in &targets {
+            let c = t.rect.center();
+            let clicked = jittery_click(&ctx, &s, c, &[vec2(4.0, -3.0)], c + vec2(3.0, 3.0), 0.3);
+            assert_eq!(clicked, vec![t.action]);
+        }
     }
 }
